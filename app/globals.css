@@ -2541,3 +2541,136 @@ select,
     align-items: stretch;
   }
 }
+
+/* Account management and activity history follow the store's operational tables. */
+.management-filters {
+  display: grid;
+  grid-template-columns: minmax(200px, 2fr) repeat(2, minmax(140px, 1fr));
+  gap: 16px;
+  align-items: end;
+  margin-bottom: 24px;
+}
+.management-filters .field {
+  margin: 0;
+  min-width: 0;
+}
+.management-filters input,
+.management-filters select {
+  width: 100%;
+  min-width: 0;
+}
+.audit-filters {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.account-create {
+  margin-bottom: 28px;
+  max-width: 680px;
+}
+.account-create h2 {
+  margin-bottom: 16px;
+}
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.danger-text {
+  color: #a52922;
+}
+.audit-table td {
+  vertical-align: top;
+}
+.audit-table small,
+.users-table small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.audit-table td:nth-child(3) {
+  min-width: 230px;
+}
+.audit-table details {
+  margin-top: 10px;
+}
+.audit-table summary {
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.audit-diff {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 12px;
+}
+.audit-values {
+  margin: 8px 0;
+}
+.audit-values div {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+.audit-values dt {
+  color: var(--muted);
+  font-size: 13px;
+}
+.audit-values dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  max-width: 60ch;
+}
+@media (max-width: 700px) {
+  .management-filters,
+  .audit-filters {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .audit-diff {
+    grid-template-columns: 1fr;
+  }
+  .audit-table td:nth-child(3) {
+    min-width: 0;
+  }
+  .row-actions {
+    gap: 16px;
+  }
+}
+
+@media (max-width: 700px) {
+  .audit-table,
+  .audit-table tbody,
+  .audit-table tr,
+  .audit-table td {
+    display: block;
+  }
+  .audit-table thead {
+    display: none;
+  }
+  .table-wrap table.audit-table {
+    width: 100%;
+    min-width: 0;
+  }
+  .audit-table tr {
+    padding: 16px;
+    border-top: 1px solid var(--line);
+  }
+  .audit-table tr:first-child {
+    border-top: 0;
+  }
+  .audit-table td {
+    padding: 7px 0;
+    border: 0;
+    overflow-wrap: anywhere;
+  }
+  .audit-table td::before,
+  .users-table td::before {
+    content: attr(data-label);
+    display: block;
+    color: var(--muted);
+    font-size: 12px;
+    margin-bottom: 3px;
+  }
+  .row-actions button {
+    min-height: 44px;
+  }
+}

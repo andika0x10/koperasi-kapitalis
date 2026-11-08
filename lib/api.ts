@@ -1,7 +1,8 @@
-import type { Env, Auth } from "./env";
-import { authenticate, createSession, sessionCookie, limit, role, unlocked } from "./auth";
-import { body, json, failure } from "./http";
-import { digest, hashPassword, HttpError, text, validPassword, verifyPassword } from "./security";
+import type { Env } from "./env";
+import { authenticate, role, unlocked } from "./auth";
+import { json, failure } from "./http";
+import { HttpError } from "./security";
+import { auditLogs, pageNumber } from "./audit";
 import { salesReport } from "./reports";
 import type { Order } from "./types";
 
@@ -11,42 +12,8 @@ export async function api(request: Request, env: Env): Promise<Response> {
       path = url.pathname,
       method = request.method,
       db = env.DB;
-    if (!["GET", "HEAD"].includes(method)) {
-      if (request.headers.get("origin") !== url.origin) throw new HttpError(403, "Asal permintaan tidak valid.");
-      if (!["POST", "PUT", "DELETE"].includes(method)) throw new HttpError(405, "Metode tidak didukung.");
-    }
-    if ((path === "/api/register" || path === "/api/login") && method === "POST") {
-      const data = await body(request),
-        username = text(data.username, "Username", 32, 3).toLowerCase();
-      if (!/^[a-z0-9_]{3,32}$/.test(username)) throw new HttpError(400, "Username memakai 3–32 huruf, angka, atau garis bawah.");
-      validPassword(data.password);
-      const ip = request.headers.get("cf-connecting-ip") || "local";
-      await limit(env, `auth:ip:${ip}`, 30, 15 * 60000);
-      await limit(env, `auth:user:${username}`, 10, 15 * 60000);
-      let user = await db.prepare("SELECT id,password_hash FROM users WHERE username=?").bind(username).first<{ id: string; password_hash: string }>();
-      if (path === "/api/register") {
-        if (user) throw new HttpError(409, "Username sudah digunakan.");
-        await limit(env, `register:${ip}`, 5, 3600000);
-        const id = crypto.randomUUID(),
-          hash = await hashPassword(data.password);
-        await db.prepare("INSERT INTO users(id,username,password_hash,role,created_at) VALUES(?,?,?,'buyer',?)").bind(id, username, hash, Date.now()).run();
-        user = { id, password_hash: hash };
-      } else if (!user || !(await verifyPassword(data.password, user.password_hash))) {
-        // Keep unknown usernames on the same expensive path as incorrect passwords.
-        if (!user) await hashPassword(data.password, "0".repeat(64));
-        throw new HttpError(401, "Username atau password salah.");
-      }
-      const token = await createSession(env, request, user.id);
-      // A concurrent reset must not grant a session authenticated with an old password.
-      const current = await db.prepare("SELECT password_hash FROM users WHERE id=?").bind(user.id).first<{ password_hash: string }>();
-      if (current?.password_hash !== user.password_hash) {
-        await db
-          .prepare("DELETE FROM sessions WHERE token_hash=?")
-          .bind(await digest(token))
-          .run();
-        throw new HttpError(401, "Password berubah. Silakan masuk kembali.");
-      }
-      return json({ ok: true }, 200, { "set-cookie": sessionCookie(token, request) });
+    if (method !== "GET" && method !== "HEAD") {
+      return env.COMMERCE.get(env.COMMERCE.idFromName("store")).fetch(request);
     }
     if (path === "/api/me" && method === "GET") {
       const auth = await authenticate(request, env, false);
@@ -102,16 +69,6 @@ export async function api(request: Request, env: Env): Promise<Response> {
           .all<{ id: string }>();
       return json(sessions.results.map((s) => ({ ...s, current: s.id === auth.session_id })));
     }
-    if (method !== "GET") {
-      // Forward original cookie and CSRF to the coordinator; it authenticates again after queueing.
-      const res = await env.COMMERCE.get(env.COMMERCE.idFromName("store")).fetch(request);
-      if (path === "/api/logout" && res.ok) {
-        const response = new Response(res.body, res);
-        response.headers.set("set-cookie", sessionCookie("", request, 0));
-        return response;
-      }
-      return res;
-    }
     unlocked(auth);
     if (path === "/api/reports/sales") {
       role(auth, "seller");
@@ -129,35 +86,43 @@ export async function api(request: Request, env: Env): Promise<Response> {
           status = url.searchParams.get("status") || "";
         const result = await db
           .prepare(
-            `SELECT o.*,u.username FROM orders o JOIN users u ON u.id=o.user_id WHERE (?='seller' OR o.user_id=?) AND (?='' OR o.status=?) ORDER BY CASE WHEN o.status='review' THEN 0 ELSE 1 END,o.created_at DESC LIMIT 30 OFFSET ?`
+            `SELECT o.*,u.username,u.deleted_at AS user_deleted_at FROM orders o JOIN users u ON u.id=o.user_id WHERE (?='seller' OR o.user_id=?) AND (?='' OR o.status=?) ORDER BY CASE WHEN o.status='review' THEN 0 ELSE 1 END,o.created_at DESC LIMIT 30 OFFSET ?`
           )
           .bind(auth.role, auth.id, status, status, page * 30)
           .all();
         return json(result.results);
       }
       const order = await db
-        .prepare("SELECT o.*,u.username FROM orders o JOIN users u ON u.id=o.user_id WHERE o.id=? AND (?='seller' OR o.user_id=?)")
+        .prepare("SELECT o.*,u.username,u.deleted_at AS user_deleted_at FROM orders o JOIN users u ON u.id=o.user_id WHERE o.id=? AND (?='seller' OR o.user_id=?)")
         .bind(path.split("/").pop(), auth.role, auth.id)
         .first<Order>();
       if (!order) throw new HttpError(404, "Pesanan tidak ditemukan.");
       const [items, events] = await Promise.all([
         db.prepare("SELECT id,name,unit,price,quantity FROM order_items WHERE order_id=? ORDER BY name").bind(order.id).all(),
-        db.prepare("SELECT id,status,note,created_at FROM order_events WHERE order_id=? ORDER BY created_at,id").bind(order.id).all(),
+        db.prepare("SELECT id,status,note,created_at,actor_id,actor_username FROM order_events WHERE order_id=? ORDER BY created_at,id").bind(order.id).all(),
       ]);
       return json({ ...order, items: items.results, events: events.results });
     }
     if (path === "/api/users") {
       role(auth, "seller");
       const q = (url.searchParams.get("q") || "").slice(0, 32),
-        page = Math.max(0, Number(url.searchParams.get("page")) || 0);
+        filter = url.searchParams.get("role") || "",
+        status = url.searchParams.get("status") || "active";
+      if (!["", "buyer", "seller"].includes(filter) || !["active", "deleted", "all"].includes(status)) throw new HttpError(400, "Filter tidak valid.");
       return json(
         (
           await db
-            .prepare("SELECT id,username,role,must_change_password,created_at FROM users WHERE instr(username,?)>0 ORDER BY created_at DESC LIMIT 30 OFFSET ?")
-            .bind(q, page * 30)
+            .prepare(
+              "SELECT id,username,role,must_change_password,created_at,deleted_at FROM users WHERE instr(lower(username),lower(?))>0 AND (?='' OR role=?) AND (?='all' OR (?='active' AND deleted_at IS NULL) OR (?='deleted' AND deleted_at IS NOT NULL)) ORDER BY created_at DESC,id DESC LIMIT 30 OFFSET ?"
+            )
+            .bind(q, filter, filter, status, status, status, pageNumber(url) * 30)
             .all()
         ).results
       );
+    }
+    if (path === "/api/audit-logs") {
+      role(auth, "seller");
+      return json(await auditLogs(env, url));
     }
     throw new HttpError(404, "Halaman tidak ditemukan.");
   } catch (error) {

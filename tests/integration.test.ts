@@ -412,3 +412,245 @@ test("login attempt limiter", async () => {
   for (let i = 0; i < 10; i++) await ok(await req(null, "/api/login", "POST", { username: "absent_user", password }), 401);
   await ok(await req(null, "/api/login", "POST", { username: "absent_user", password }), 429);
 });
+
+async function loginAs(username: string, secret: string): Promise<Client> {
+  const res = await req(null, "/api/login", "POST", { username, password: secret }, { "cf-connecting-ip": crypto.randomUUID() });
+  await ok(res);
+  const client = { id: "", cookie: res.headers.get("set-cookie")!.split(";")[0], csrf: "" };
+  const me = await ok(await req(client, "/api/me"));
+  client.id = me.user.id;
+  client.csrf = me.csrf;
+  return client;
+}
+async function managed(role = "buyer") {
+  const username = "u_" + crypto.randomUUID().replaceAll("-", "").slice(0, 15);
+  const created = await ok(await req(seller, "/api/users", "POST", { username, role }), 201);
+  const client = await loginAs(username, created.password);
+  await ok(await req(client, "/api/password", "POST", { current: created.password, password }));
+  return { client, username };
+}
+test("multi-seller creation, forced password, immutable role, reset and permissions", async () => {
+  const username = "seller_new";
+  const created = await ok(await req(seller, "/api/users", "POST", { username, role: "seller" }), 201);
+  const client = await loginAs(username, created.password);
+  await ok(await req(client, "/api/users"), 403);
+  await ok(await req(client, "/api/username", "PUT", { username: "blocked_change", current: created.password }), 403);
+  await ok(await req(client, "/api/password", "POST", { current: created.password, password }));
+  await ok(await req(client, "/api/users"));
+  await ok(await req(client, "/api/audit-logs"));
+  await ok(await req(client, "/api/users/" + client.id + "/reset", "POST", {}), 400);
+  await ok(await req(client, "/api/users/" + client.id, "PUT", { role: "buyer" }), 404);
+  const buyer = await managed();
+  await ok(await req(buyer.client, "/api/users", "POST", { username: "illegal_seller", role: "seller" }), 403);
+  await ok(await req(buyer.client, "/api/audit-logs"), 403);
+  await ok(await req(seller, "/api/users", "POST", { username: "SELLER_NEW", role: "buyer" }), 409);
+  await ok(await req(seller, "/api/users", "POST", { username: "invalid_role", role: "admin" }), 400);
+  await ok(await req(seller, "/api/users", "POST", { username: "bad_csrf", role: "buyer" }, { "x-csrf-token": "wrong" }), 403);
+  const reset = await ok(await req(seller, "/api/users/" + client.id + "/reset", "POST", {}));
+  await ok(await req(client, "/api/users"), 401);
+  const relogin = await loginAs(username, reset.password);
+  assert.equal((await ok(await req(relogin, "/api/me"))).user.must_change_password, 1);
+});
+test("username changes confirm password, preserve current session, revoke others and retain actor snapshots", async () => {
+  const { client, username } = await managed();
+  const other = await loginAs(username, password),
+    name = "renamed_" + crypto.randomUUID().slice(0, 8);
+  await ok(await req(client, "/api/username", "PUT", { username: name, current: "wrong-password" }), 400);
+  await ok(await req(client, "/api/username", "PUT", { username: "seller_new", current: password }), 409);
+  await ok(await req(client, "/api/username", "PUT", { username: "bad-name", current: password }), 400);
+  await ok(await req(client, "/api/username", "PUT", { username: name.toUpperCase(), current: password }));
+  assert.equal((await ok(await req(client, "/api/me"))).user.username, name);
+  await ok(await req(other, "/api/sessions"), 401);
+  await ok(await req(null, "/api/login", "POST", { username, password }, { "cf-connecting-ip": crypto.randomUUID() }), 401);
+  await loginAs(name, password);
+  await ok(await req(seller, "/api/users", "POST", { username, role: "buyer" }), 201);
+  const logs = await ok(await req(seller, "/api/audit-logs?action=username_changed&actor=" + client.id));
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].actor_username, username);
+  assert.equal(JSON.parse(logs[0].details).after.username, name);
+  await ok(await req(client, "/api/username", "PUT", { username: name, current: password }));
+  assert.equal((await ok(await req(seller, "/api/audit-logs?action=username_changed&actor=" + client.id))).length, 1);
+});
+test("soft deletion retains active orders, reserves usernames and rejects old sessions and reset", async () => {
+  const { client, username } = await managed();
+  const p = await product(3);
+  await cart(client, p, 1);
+  const order = await ok(await checkout(client), 201);
+  await ok(await req(seller, "/api/users/" + client.id, "DELETE"));
+  await ok(await req(client, "/api/cart"), 401);
+  await ok(await req(null, "/api/login", "POST", { username, password }, { "cf-connecting-ip": crypto.randomUUID() }), 401);
+  await ok(await req(seller, "/api/users/" + client.id + "/reset", "POST", {}), 404);
+  await ok(await req(seller, "/api/users", "POST", { username, role: "buyer" }), 409);
+  await ok(await req(null, "/api/register", "POST", { username, password }, { "cf-connecting-ip": crypto.randomUUID() }), 409);
+  const detail = await ok(await req(seller, "/api/orders/" + order.id));
+  assert.equal(detail.status, "pending");
+  assert.ok(detail.user_deleted_at);
+  await db.prepare("UPDATE orders SET status='review' WHERE id=?").bind(order.id).run();
+  const operator = await managed("seller");
+  await ok(await req(operator.client, "/api/orders/" + order.id + "/decision", "POST", { status: "approved", reason: "" }));
+  await ok(await req(operator.client, "/api/orders/" + order.id + "/ship", "POST", { courier: "Kurir" }));
+  await ok(await req(operator.client, "/api/orders/" + order.id + "/complete", "POST", {}));
+  const events = await db.prepare("SELECT actor_id,actor_username FROM order_events WHERE order_id=? AND status='completed'").bind(order.id).first<any>();
+  assert.equal(events.actor_id, operator.client.id);
+  assert.equal(events.actor_username, operator.username);
+  await ok(await req(seller, "/api/users/" + client.id, "DELETE"));
+  assert.equal((await ok(await req(seller, "/api/audit-logs?action=user_deleted&q=" + client.id))).length, 1);
+  assert.ok((await ok(await req(seller, "/api/users?status=deleted&q=" + username))).some((u: any) => u.id === client.id));
+});
+test("concurrent seller deletions revoke queued access and database protects final seller", async () => {
+  const first = await managed("seller"),
+    second = await managed("seller");
+  await ok(await req(first.client, "/api/users/" + first.client.id, "DELETE"), 400);
+  const results = await Promise.all([req(first.client, "/api/users/" + second.client.id, "DELETE"), req(second.client, "/api/users/" + first.client.id, "DELETE")]);
+  assert.deepEqual(results.map((r) => r.status).sort(), [200, 401]);
+  const active = (await db.prepare("SELECT id FROM users WHERE role='seller' AND deleted_at IS NULL").all<{ id: string }>()).results;
+  for (const user of active.filter((u) => u.id !== seller.id)) await ok(await req(seller, "/api/users/" + user.id, "DELETE"));
+  await assert.rejects(() => db.prepare("UPDATE users SET deleted_at=? WHERE id=?").bind(Date.now(), seller.id).run(), /LAST_SELLER/);
+});
+test("concurrent login with deletion or username change cannot retain a stale session", async () => {
+  const deleted = await managed();
+  const results = await Promise.all([
+    req(null, "/api/login", "POST", { username: deleted.username, password }, { "cf-connecting-ip": crypto.randomUUID() }),
+    req(seller, "/api/users/" + deleted.client.id, "DELETE"),
+  ]);
+  assert.equal(results[1].status, 200);
+  if (results[0].status === 200) {
+    const cookie = results[0].headers.get("set-cookie")!.split(";")[0];
+    assert.equal((await ok(await req({ id: deleted.client.id, cookie, csrf: "" }, "/api/me"))).user, null);
+  }
+  const renamed = await managed();
+  const result = await Promise.all([
+    req(null, "/api/login", "POST", { username: renamed.username, password }, { "cf-connecting-ip": crypto.randomUUID() }),
+    req(renamed.client, "/api/username", "PUT", { username: "race_renamed", current: password }),
+  ]);
+  assert.equal(result[1].status, 200);
+  if (result[0].status === 200) {
+    const cookie = result[0].headers.get("set-cookie")!.split(";")[0];
+    assert.equal((await ok(await req({ id: renamed.client.id, cookie, csrf: "" }, "/api/me"))).user, null);
+  }
+});
+test("audit atomicity, sensitive field allowlist, WIB filters, pagination and daily retention", async () => {
+  const { audit } = await import("../lib/audit");
+  await db.batch([
+    audit(db, { id: seller.id, username: "snapshot" }, "test_details", "audit-probe", "product", {
+      before: { price: 1, password: "secret", token: "secret", address: "private" },
+      after: { price: 2, password_hash: "secret" },
+    }),
+  ]);
+  const rows = await ok(await req(seller, "/api/audit-logs?action=test_details&q=audit-probe"));
+  assert.deepEqual(JSON.parse(rows[0].details), { before: { price: 1 }, after: { price: 2 } });
+  await assert.rejects(() =>
+    db.batch([db.prepare("UPDATE settings SET shipping_fee=42 WHERE id=1"), audit(db, { id: "missing-user", username: "missing" }, "atomic_fail", "1", "settings")])
+  );
+  assert.notEqual((await db.prepare("SELECT shipping_fee FROM settings").first<any>()).shipping_fee, 42);
+  assert.equal((await db.prepare("SELECT COUNT(*) n FROM audit_log WHERE action='atomic_fail'").first<any>()).n, 0);
+  const day = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Jakarta" });
+  const boundary = Date.parse(day + "T00:00:00+07:00");
+  for (let i = 0; i < 35; i++)
+    await db
+      .prepare("INSERT INTO audit_log(id,action,target_id,created_at) VALUES(?,?,?,?)")
+      .bind("page-" + i, "boundary_test", "probe", boundary + i)
+      .run();
+  await db
+    .prepare("INSERT INTO audit_log(id,action,target_id,created_at) VALUES('before-boundary','boundary_test','probe',?)")
+    .bind(boundary - 1)
+    .run();
+  const path = `/api/audit-logs?action=boundary_test&from=${day}&to=${day}`;
+  const one = await ok(await req(seller, path)),
+    two = await ok(await req(seller, path + "&page=1"));
+  assert.equal(one.length, 30);
+  assert.equal(two.length, 5);
+  assert.equal(new Set([...one, ...two].map((r: any) => r.id)).size, 35);
+  await ok(await req(seller, "/api/audit-logs?from=2026-02-30&to=2026-03-01"), 400);
+  await ok(await req(seller, "/api/audit-logs?page=1.5"), 400);
+  const cutoff = Date.now() - 365 * 86400000;
+  await db
+    .prepare("INSERT INTO audit_log(id,action,created_at) VALUES('old-log','legacy',?)")
+    .bind(cutoff - 10000)
+    .run();
+  await db
+    .prepare("INSERT INTO audit_log(id,action,created_at) VALUES('recent-log','legacy',?)")
+    .bind(cutoff + 60000)
+    .run();
+  const coordinator = await mf.getDurableObjectNamespace("COMMERCE");
+  const stub = coordinator.get(coordinator.idFromName("store"));
+  await stub.fetch("https://internal/__test/alarm");
+  assert.equal(await db.prepare("SELECT id FROM audit_log WHERE id='old-log'").first(), null);
+  assert.ok(await db.prepare("SELECT id FROM audit_log WHERE id='recent-log'").first());
+  const failures = await ok(await req(seller, "/api/audit-logs?action=login_failed"));
+  assert.ok(failures.length > 0);
+  assert.ok(failures.every((r: any) => r.outcome === "failure"));
+});
+
+test("concurrent login with password reset revokes old credentials and sessions", async () => {
+  const user = await managed();
+  const results = await Promise.all([
+    req(null, "/api/login", "POST", { username: user.username, password }, { "cf-connecting-ip": crypto.randomUUID() }),
+    req(seller, "/api/users/" + user.client.id + "/reset", "POST", {}),
+  ]);
+  const reset = await ok(results[1]);
+  if (results[0].status === 200) {
+    const cookie = results[0].headers.get("set-cookie")!.split(";")[0];
+    assert.equal((await ok(await req({ id: user.client.id, cookie, csrf: "" }, "/api/me"))).user, null);
+  } else assert.equal(results[0].status, 401);
+  await ok(await req(null, "/api/login", "POST", { username: user.username, password }, { "cf-connecting-ip": crypto.randomUUID() }), 401);
+  const current = await loginAs(user.username, reset.password);
+  assert.equal((await ok(await req(current, "/api/me"))).user.must_change_password, 1);
+});
+
+test("audits cover mutations, safe retries and automatic expiry with an idle daily alarm", async () => {
+  const user = await managed(),
+    p = await product(4);
+  await cart(user.client, p, 1);
+  await cart(user.client, p, 1);
+  const order = await ok(await checkout(user.client), 201);
+  await db.prepare("UPDATE orders SET expires_at=1 WHERE id=?").bind(order.id).run();
+  const ns = await mf.getDurableObjectNamespace("COMMERCE"),
+    coordinator = ns.get(ns.idFromName("store"));
+  await coordinator.fetch("https://internal/__test/alarm");
+  await coordinator.fetch("https://internal/__test/alarm");
+  const expiration = await ok(await req(seller, "/api/audit-logs?action=order_expired&q=" + order.id));
+  assert.equal(expiration.length, 1);
+  assert.equal(expiration[0].actor_username, "Sistem");
+  const event = await db.prepare("SELECT actor_id,actor_username FROM order_events WHERE order_id=? AND status='expired'").bind(order.id).first<any>();
+  assert.equal(event.actor_id, null);
+  assert.equal(event.actor_username, "Sistem");
+  assert.equal((await ok(await req(seller, "/api/audit-logs?action=cart_updated&actor=" + user.client.id))).length, 1);
+  const before = await db.prepare("SELECT COUNT(*) n FROM audit_log").first<any>();
+  await ok(await req(seller, "/api/users"));
+  await ok(await req(user.client, "/api/orders"));
+  assert.equal((await db.prepare("SELECT COUNT(*) n FROM audit_log").first<any>()).n, before.n);
+  await ok(await req(user.client, "/api/logout", "POST", {}));
+  const logout = await ok(await req(seller, "/api/audit-logs?action=logout&actor=" + user.client.id));
+  assert.equal(logout.length, 1);
+  const actions = (await db.prepare("SELECT DISTINCT action FROM audit_log").all<{ action: string }>()).results.map((r) => r.action);
+  for (const action of [
+    "registered",
+    "login",
+    "login_failed",
+    "password_changed",
+    "username_changed",
+    "user_created",
+    "user_deleted",
+    "user_password_reset",
+    "sessions_revoked",
+    "cart_updated",
+    "checkout",
+    "proof_uploaded",
+    "attachment_uploaded",
+    "product_created",
+    "product_updated",
+    "settings_updated",
+    "approved",
+    "rejected",
+    "shipped",
+    "completed",
+    "order_expired",
+    "request_rejected",
+    "logout",
+  ])
+    assert.ok(actions.includes(action), action);
+  await db.prepare("UPDATE orders SET expires_at=1 WHERE status='pending'").run();
+  const alarm = (await (await coordinator.fetch("https://internal/__test/alarm")).json()) as { scheduledAt: number };
+  assert.ok(alarm.scheduledAt > Date.now() + 23 * 3600000);
+});

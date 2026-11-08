@@ -67,7 +67,12 @@ export function Orders({ seller = false }: { seller?: boolean }) {
                     </Link>
                     <small className="mobile-only">{date(o.created_at)}</small>
                   </td>
-                  {seller && <td data-label="Buyer">{o.username}</td>}
+                  {seller && (
+                    <td data-label="Buyer">
+                      {o.username}
+                      {!!o.user_deleted_at && <small>Akun terhapus</small>}
+                    </td>
+                  )}
                   <td className="desktop-date">{date(o.created_at)}</td>
                   <td data-label="Total">
                     <strong>{money(o.total)}</strong>
@@ -417,7 +422,10 @@ export function OrderDetail({ id }: { id: string }) {
               <li key={e.id}>
                 <span className="timeline-dot" />
                 <strong>{statusLabel[e.status]}</strong>
-                <small>{date(e.created_at)}</small>
+                <small>
+                  {date(e.created_at)}
+                  {e.actor_username ? ` · ${e.actor_username}` : ""}
+                </small>
                 {e.note && <p className="preserve">{e.note}</p>}
               </li>
             ))}

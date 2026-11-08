@@ -9,6 +9,7 @@ import { Orders, OrderDetail } from "./orders";
 import { AuthPage, AccountSettings } from "./account";
 import { ManageProducts, Users } from "./seller";
 import { Navigation } from "./navigation";
+import { AuditLogs } from "./audit-logs";
 import { SalesReport } from "./reports";
 export default function Portal() {
   const [me, setMe] = useState<{ user: User | null; csrf: string | null }>({ user: null, csrf: null }),
@@ -123,6 +124,7 @@ function Screen({ path }: { path: string }) {
   if (path === "/seller/produk") return <ManageProducts />;
   if (path === "/seller/laporan") return <SalesReport />;
   if (path === "/keranjang" && me.user.role === "buyer") return <CartPage />;
+  if (path === "/seller/log-aktivitas") return <AuditLogs />;
   if (path === "/seller/users") return <Users />;
   if (path === "/checkout" && me.user.role === "buyer") return <Checkout />;
   if (path === "/pesanan") return <Orders />;

@@ -48,6 +48,7 @@ export function Navigation({ path, logout }: { path: string; logout: () => Promi
         ["/seller", "Pesanan"],
         ["/seller/produk", "Produk"],
         ["/seller/users", "Pengguna"],
+        ["/seller/log-aktivitas", "Log aktivitas"],
         ["/seller/laporan", "Laporan"],
       ]
     : [["/", "Produk"], ["/keranjang", "Keranjang"], ...(me.user ? [["/pesanan", "Pesanan saya"]] : [])];

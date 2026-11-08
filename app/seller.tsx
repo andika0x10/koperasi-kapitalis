@@ -177,10 +177,15 @@ function ProductEditor({ product, onClose }: { product: Product | "new"; onClose
   );
 }
 export function Users() {
-  const { api, notify } = useApp(),
-    [q, setQ] = useState(""),
-    [page, setPage] = useState(0),
-    { data, error, loading } = useData<(User & { created_at: number })[]>(`/api/users?q=${encodeURIComponent(q)}&page=${page}`),
+  const { api, notify, changed, me } = useApp();
+  const [q, setQ] = useState(""),
+    [role, setRole] = useState(""),
+    [status, setStatus] = useState("active"),
+    [page, setPage] = useState(0);
+  const { data, error, loading } = useData<(User & { created_at: number; deleted_at: number | null })[]>(
+    `/api/users?q=${encodeURIComponent(q)}&role=${role}&status=${status}&page=${page}`
+  );
+  const [create, setCreate] = useState(false),
     [credential, setCredential] = useState<{ username: string; password: string } | null>(null),
     [busy, setBusy] = useState("");
   return (
@@ -188,28 +193,84 @@ export function Users() {
       <div className="page-heading">
         <div>
           <h1>Pengguna</h1>
-          <p>Lihat akun terdaftar dan bantu buyer memulihkan akses.</p>
+          <p>Kelola akses buyer dan seller di koperasi.</p>
         </div>
+        <button className="button primary" aria-expanded={create} onClick={() => setCreate(!create)}>
+          {create ? "Tutup formulir" : "Tambah pengguna"}
+        </button>
       </div>
-      <div className="search manage-search">
-        <Icon name="search" size={20} />
-        <input
-          aria-label="Cari username"
-          value={q}
-          placeholder="Cari username…"
-          onChange={(e) => {
-            setQ(e.target.value);
-            setPage(0);
-          }}
-        />
+      {create && (
+        <section className="account-create detail-section">
+          <h2>Tambah pengguna</h2>
+          <ActionForm
+            label="Buat akun"
+            onSubmit={async (f) => {
+              const result = await api<{ username: string; password: string }>("/api/users", "POST", { username: f.get("username"), role: f.get("role") });
+              setCredential(result);
+              setCreate(false);
+              changed();
+              notify("Akun dibuat. Sampaikan password sementara secara privat.");
+            }}
+          >
+            <Field label="Username" hint="3–32 huruf, angka, atau garis bawah.">
+              <input name="username" required pattern="[a-zA-Z0-9_]{3,32}" minLength={3} maxLength={32} autoCapitalize="none" autoComplete="off" />
+            </Field>
+            <Field label="Role" hint="Role tidak dapat diubah setelah akun dibuat.">
+              <select name="role" defaultValue="buyer">
+                <option value="buyer">Buyer</option>
+                <option value="seller">Seller</option>
+              </select>
+            </Field>
+            <p className="muted">Password sementara dibuat otomatis. Pemilik wajib menggantinya saat masuk pertama kali.</p>
+          </ActionForm>
+        </section>
+      )}
+      <div className="management-filters">
+        <Field label="Cari username">
+          <input
+            type="search"
+            value={q}
+            onChange={(e) => {
+              setQ(e.target.value);
+              setPage(0);
+            }}
+            placeholder="Cari username…"
+          />
+        </Field>
+        <Field label="Role">
+          <select
+            value={role}
+            onChange={(e) => {
+              setRole(e.target.value);
+              setPage(0);
+            }}
+          >
+            <option value="">Semua role</option>
+            <option value="buyer">Buyer</option>
+            <option value="seller">Seller</option>
+          </select>
+        </Field>
+        <Field label="Status akun">
+          <select
+            value={status}
+            onChange={(e) => {
+              setStatus(e.target.value);
+              setPage(0);
+            }}
+          >
+            <option value="active">Aktif</option>
+            <option value="deleted">Terhapus</option>
+            <option value="all">Semua status</option>
+          </select>
+        </Field>
       </div>
       <ErrorBox message={error} />
       {credential && (
-        <div className="credential alert">
+        <div className="credential alert" role="status">
           <div>
             <strong>Password sementara untuk {credential.username}</strong>
             <code>{credential.password}</code>
-            <p>Salin dan sampaikan secara privat kepada pemilik akun. Password ini hanya ditampilkan sekarang. Semua sesi lamanya telah dicabut.</p>
+            <p>Ditampilkan sekali. Sampaikan secara privat; pemilik wajib mengganti password saat masuk.</p>
             <button className="button secondary small" onClick={() => setCredential(null)}>
               Sudah disalin, tutup
             </button>
@@ -220,7 +281,7 @@ export function Users() {
         <Loading />
       ) : !data?.length ? (
         <Empty title="Pengguna tidak ditemukan">
-          <p>Coba username lain.</p>
+          <p>Ubah pencarian atau filter, atau tambahkan pengguna baru.</p>
         </Empty>
       ) : (
         <div className="table-wrap">
@@ -229,6 +290,7 @@ export function Users() {
               <tr>
                 <th>Username</th>
                 <th>Role</th>
+                <th>Status</th>
                 <th>Terdaftar</th>
                 <th>Tindakan</th>
               </tr>
@@ -236,34 +298,72 @@ export function Users() {
             <tbody>
               {data.map((u) => (
                 <tr key={u.id}>
-                  <td>
+                  <td data-label="Username">
                     <strong>{u.username}</strong>
-                    {!!u.must_change_password && <small>Wajib ganti password</small>}
+                    {u.id === me.user?.id && <small>Akun Anda</small>}
+                    {!!u.must_change_password && !u.deleted_at && <small>Wajib ganti password</small>}
                   </td>
-                  <td>{u.role === "seller" ? "Seller" : "Buyer"}</td>
-                  <td>{date(u.created_at)}</td>
-                  <td>
-                    {u.role === "buyer" ? (
-                      <button
-                        className="text-button"
-                        disabled={busy === u.id}
-                        onClick={async () => {
-                          if (!window.confirm(`Reset password ${u.username}? Semua sesinya akan dicabut.`)) return;
-                          setBusy(u.id);
-                          try {
-                            const result = await api<{ password: string }>("/api/users/" + u.id + "/reset", "POST", {});
-                            setCredential({ username: u.username, password: result.password });
-                          } catch (e) {
-                            notify((e as Error).message);
-                          } finally {
-                            setBusy("");
-                          }
-                        }}
-                      >
-                        {busy === u.id ? "Memproses…" : "Reset password"}
-                      </button>
+                  <td data-label="Role">{u.role === "seller" ? "Seller" : "Buyer"}</td>
+                  <td data-label="Status">
+                    {u.deleted_at ? (
+                      <>
+                        <span>Akun terhapus</span>
+                        <small>{date(u.deleted_at)}</small>
+                      </>
                     ) : (
-                      <span className="muted">Akun utama</span>
+                      "Aktif"
+                    )}
+                  </td>
+                  <td data-label="Terdaftar">{date(u.created_at)}</td>
+                  <td data-label="Tindakan">
+                    {!u.deleted_at && u.id !== me.user?.id ? (
+                      <div className="row-actions">
+                        <button
+                          className="text-button"
+                          disabled={!!busy}
+                          onClick={async () => {
+                            if (!window.confirm(`Reset password ${u.username}? Semua sesi akun ini akan dicabut.`)) return;
+                            setBusy(u.id);
+                            try {
+                              const result = await api<{ password: string }>("/api/users/" + u.id + "/reset", "POST", {});
+                              setCredential({ username: u.username, password: result.password });
+                              changed();
+                            } catch (e) {
+                              notify((e as Error).message);
+                            } finally {
+                              setBusy("");
+                            }
+                          }}
+                        >
+                          Reset password
+                        </button>
+                        <button
+                          className="text-button danger-text"
+                          disabled={!!busy}
+                          onClick={async () => {
+                            if (
+                              !window.confirm(
+                                `Hapus akun ${u.username} secara permanen? Akses dan semua sesi akan dicabut. Akun tidak dapat dipulihkan. Pesanan tetap diproses dan riwayat tersimpan.`
+                              )
+                            )
+                              return;
+                            setBusy(u.id);
+                            try {
+                              await api("/api/users/" + u.id, "DELETE");
+                              changed();
+                              notify("Akun dihapus. Semua sesinya telah dicabut.");
+                            } catch (e) {
+                              notify((e as Error).message);
+                            } finally {
+                              setBusy("");
+                            }
+                          }}
+                        >
+                          Hapus akun
+                        </button>
+                      </div>
+                    ) : (
+                      <span className="muted">{u.deleted_at ? "Tidak dapat dipulihkan" : "Kelola di Pengaturan"}</span>
                     )}
                   </td>
                 </tr>

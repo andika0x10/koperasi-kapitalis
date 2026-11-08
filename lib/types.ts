@@ -32,6 +32,7 @@ export interface Order {
   id: string;
   user_id: string;
   username?: string;
+  user_deleted_at?: number | null;
   status: Status;
   recipient: string;
   phone: string;
@@ -59,6 +60,8 @@ export interface OrderItem {
   price: number;
 }
 export interface OrderEvent {
+  actor_id?: string | null;
+  actor_username?: string | null;
   id: string;
   status: Status;
   note: string | null;

@@ -65,7 +65,8 @@ export function AccountSettings() {
     sessions = useData<Session[]>("/api/sessions");
   const [section, setSection] = useState("akun"),
     [dirty, setDirty] = useState(false),
-    [passwordVersion, setPasswordVersion] = useState(0);
+    [passwordVersion, setPasswordVersion] = useState(0),
+    [usernameVersion, setUsernameVersion] = useState(0);
   const navigationState = useRef({ section, dirty });
   navigationState.current = { section, dirty };
   const forced = !!me.user?.must_change_password;
@@ -175,6 +176,37 @@ export function AccountSettings() {
                   <dd>{me.user?.role === "seller" ? "Seller" : "Buyer"}</dd>
                 </div>
               </dl>
+              {!forced && (
+                <ActionForm
+                  key={usernameVersion}
+                  label="Simpan username"
+                  onSubmit={async (f) => {
+                    await api("/api/username", "PUT", { username: f.get("username"), current: f.get("current") });
+                    await refresh();
+                    changed();
+                    setDirty(false);
+                    setUsernameVersion((v) => v + 1);
+                    notify("Username disimpan. Sesi perangkat lain telah dicabut.");
+                  }}
+                >
+                  <Field label="Username baru" hint="3–32 huruf, angka, atau garis bawah. Perangkat lain akan keluar setelah username berubah.">
+                    <input
+                      name="username"
+                      defaultValue={me.user?.username}
+                      pattern="[a-zA-Z0-9_]{3,32}"
+                      minLength={3}
+                      maxLength={32}
+                      required
+                      autoComplete="username"
+                      autoCapitalize="none"
+                      spellCheck={false}
+                    />
+                  </Field>
+                  <Field label="Password saat ini">
+                    <input name="current" type="password" autoComplete="current-password" required maxLength={128} />
+                  </Field>
+                </ActionForm>
+              )}
             </section>
           )}
           {active === "keamanan" && (

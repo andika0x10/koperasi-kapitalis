@@ -9,7 +9,7 @@ export async function authenticate(request: Request, env: Env, required = true):
   }
   const now = Date.now();
   const auth = await env.DB.prepare(
-    `SELECT u.id,u.username,u.role,u.must_change_password,s.id AS session_id,s.csrf FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND s.last_seen>?`
+    `SELECT u.id,u.username,u.role,u.must_change_password,s.id AS session_id,s.csrf FROM sessions s JOIN users u ON u.id=s.user_id WHERE u.deleted_at IS NULL AND s.token_hash=? AND s.expires_at>? AND s.last_seen>?`
   )
     .bind(await digest(token), now, now - 7 * DAY)
     .first<Auth>();
@@ -32,11 +32,12 @@ export function role(auth: Auth, value: "seller" | "buyer") {
 export function sessionCookie(token: string, request: Request, maxAge = 30 * 86400) {
   return `kk_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${new URL(request.url).protocol === "https:" ? "; Secure" : ""}`;
 }
-export async function createSession(env: Env, request: Request, userId: string) {
+export async function createSession(env: Env, request: Request, userId: string, statements: D1PreparedStatement[] = []) {
   const token = random(),
     id = crypto.randomUUID(),
     now = Date.now();
   await env.DB.batch([
+    ...statements,
     env.DB.prepare("DELETE FROM sessions WHERE expires_at<? OR last_seen<?").bind(now, now - 7 * DAY),
     env.DB.prepare("INSERT INTO sessions(id,user_id,token_hash,csrf,device,created_at,last_seen,expires_at) VALUES(?,?,?,?,?,?,?,?)").bind(
       id,

@@ -7,7 +7,7 @@ const args = process.argv.slice(2),
   };
 const base = value("--base") || "http://127.0.0.1:5173",
   credentials = value("--credentials");
-for (const path of ["/", "/masuk", "/daftar", "/pengaturan", "/seller"]) {
+for (const path of ["/", "/masuk", "/daftar", "/pengaturan", "/seller", "/seller/users", "/seller/log-aktivitas"]) {
   const response = await fetch(base + path);
   const html = await response.text();
   assert.equal(response.status, 200, path);
@@ -23,6 +23,10 @@ for (const path of ["/", "/masuk", "/daftar", "/pengaturan", "/seller"]) {
     }
     assert.match(response.headers.get("content-security-policy") || "", /frame-ancestors 'none'/);
   }
+}
+for (const path of ["/api/users", "/api/audit-logs"]) {
+  assert.equal((await fetch(base + path)).status, 401, path);
+  console.log("OK protected API", path);
 }
 const catalog = await fetch(base + "/api/products");
 assert.equal(catalog.status, 200);

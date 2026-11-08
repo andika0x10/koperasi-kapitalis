@@ -7,7 +7,7 @@ export class Commerce extends BaseCommerce {
   async fetch(request: Request) {
     if (new URL(request.url).pathname === "/__test/alarm") {
       await this.alarm();
-      return Response.json({ ok: true });
+      return Response.json({ ok: true, scheduledAt: await this.ctx.storage.getAlarm() });
     }
     return super.fetch(request);
   }
