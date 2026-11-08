@@ -44,7 +44,6 @@ export interface Order {
   proof_id: string | null;
   reason: string | null;
   courier: string | null;
-  tracking: string | null;
   created_at: number;
   expires_at: number;
   proof_at: number | null;
@@ -83,3 +82,11 @@ export const statusLabel: Record<Status, string> = {
 };
 export const money = (n: number) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(n);
 export const date = (n: number) => new Intl.DateTimeFormat("id-ID", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Jakarta" }).format(n) + " WIB";
+
+export interface SalesReportData {
+  summary: { orders: number; total: number; subtotal: number; shipping_fee: number };
+  daily: { day: string; orders: number; total: number }[];
+  products: { product_id: string; name: string; unit: string; quantity: number; subtotal: number }[];
+  transactions: Pick<Order, "id" | "recipient" | "status" | "decided_at" | "subtotal" | "shipping_fee" | "total">[];
+  page: number;
+}

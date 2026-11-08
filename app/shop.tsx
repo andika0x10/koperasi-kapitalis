@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Product, CartItem, Settings } from "../lib/types";
 import { money } from "../lib/types";
-import { useApp, useData, Icon, ErrorBox, Loading, Empty, Field, ActionForm, image } from "./ui";
+import { useApp, useData, Icon, ErrorBox, Loading, Empty, Field, ActionForm, image, Overlay } from "./ui";
 export function Catalog() {
   const { me, api, notify, changed } = useApp(),
     router = useRouter();
@@ -118,17 +118,11 @@ export function Catalog() {
           )}
         </section>
         {me.user?.role !== "seller" && (
-          <aside className={"cart-panel " + (cartOpen ? "open" : "")}>
-            <div className="cart-top">
-              <h2>
-                <Icon name="bag" />
-                Keranjang Anda <span>{count}</span>
-              </h2>
-              <button className="mobile-only icon-button" aria-label="Tutup keranjang" onClick={() => setCartOpen(false)}>
-                <Icon name="close" />
-              </button>
-            </div>
-            <Cart cart={cart.data || []} error={cart.error} onClose={() => setCartOpen(false)} />
+          <aside className="cart-panel">
+            <h2 className="cart-top">
+              Keranjang Anda <span>{count}</span>
+            </h2>
+            <Cart cart={cart.data || []} error={cart.error} loading={cart.loading} compact />
           </aside>
         )}
       </div>
@@ -141,14 +135,17 @@ export function Catalog() {
           <strong>{money(cart.data?.reduce((s, p) => s + p.price * p.quantity, 0) || 0)}</strong>
         </button>
       )}
-      {cartOpen && <button className="cart-backdrop" aria-label="Tutup keranjang" onClick={() => setCartOpen(false)} />}
+      <Overlay open={cartOpen} onClose={() => setCartOpen(false)} title="Keranjang Anda" className="cart-overlay">
+        <Cart cart={cart.data || []} error={cart.error} loading={cart.loading} compact onClose={() => setCartOpen(false)} />
+      </Overlay>
     </>
   );
 }
-function Cart({ cart, error, onClose }: { cart: CartItem[]; error?: string; onClose: () => void }) {
+function Cart({ cart, error, loading, compact = false, onClose }: { cart: CartItem[]; error?: string; loading?: boolean; compact?: boolean; onClose?: () => void }) {
   const { me, api, changed, notify } = useApp(),
     [busy, setBusy] = useState("");
   async function quantity(p: CartItem, n: number) {
+    if (busy || loading) return;
     setBusy(p.id);
     try {
       await api("/api/cart", "PUT", { product_id: p.id, quantity: n });
@@ -159,6 +156,8 @@ function Cart({ cart, error, onClose }: { cart: CartItem[]; error?: string; onCl
       setBusy("");
     }
   }
+  if (loading && !cart.length) return <Loading />;
+  if (error) return <ErrorBox message={error} />;
   const invalid = cart.some((p) => p.archived || p.quantity > p.stock);
   return (
     <>
@@ -168,6 +167,14 @@ function Cart({ cart, error, onClose }: { cart: CartItem[]; error?: string; onCl
           <div className="cart-items">
             {cart.map((p) => (
               <div className="cart-item" key={p.id}>
+                {!compact &&
+                  (p.photo_id ? (
+                    <img className="cart-photo" src={image(p.photo_id)} alt={p.name} />
+                  ) : (
+                    <span className="cart-photo placeholder">
+                      <Icon name="box" />
+                    </span>
+                  ))}
                 <div className="cart-item-name">
                   <strong>{p.name}</strong>
                   <small>
@@ -177,13 +184,13 @@ function Cart({ cart, error, onClose }: { cart: CartItem[]; error?: string; onCl
                 </div>
                 <div className="cart-controls">
                   <div className="quantity">
-                    <button type="button" disabled={busy === p.id} aria-label={"Kurangi " + p.name} onClick={() => quantity(p, p.quantity - 1)}>
+                    <button type="button" disabled={!!busy || loading} aria-label={"Kurangi " + p.name} onClick={() => quantity(p, p.quantity - 1)}>
                       <Icon name="minus" size={14} />
                     </button>
                     <span>{p.quantity}</span>
                     <button
                       type="button"
-                      disabled={busy === p.id || p.quantity >= p.stock || !!p.archived}
+                      disabled={!!busy || loading || p.quantity >= Math.min(p.stock, 999) || !!p.archived}
                       aria-label={"Tambah " + p.name}
                       onClick={() => quantity(p, p.quantity + 1)}
                     >
@@ -192,11 +199,11 @@ function Cart({ cart, error, onClose }: { cart: CartItem[]; error?: string; onCl
                   </div>
                   <strong>{money(p.price * p.quantity)}</strong>
                 </div>
-                {!!p.archived && (
-                  <button className="text-button danger-text" onClick={() => quantity(p, 0)}>
+                {
+                  <button className="text-button danger-text" disabled={!!busy || loading} onClick={() => quantity(p, 0)}>
                     Hapus barang
                   </button>
-                )}
+                }
               </div>
             ))}
           </div>
@@ -206,12 +213,19 @@ function Cart({ cart, error, onClose }: { cart: CartItem[]; error?: string; onCl
               <strong>{money(cart.reduce((s, p) => s + p.price * p.quantity, 0))}</strong>
             </div>
             <p>Ongkir ditambahkan saat checkout.</p>
-            {invalid ? (
+            {busy || loading ? (
+              <p role="status">Aktualisasi keranjang…</p>
+            ) : invalid ? (
               <p className="danger-text">Sesuaikan barang yang tidak tersedia sebelum melanjutkan.</p>
             ) : (
               <Link className="button primary full" href="/checkout" onClick={onClose}>
                 Lanjut ke checkout
                 <Icon name="arrow" size={17} />
+              </Link>
+            )}
+            {compact && (
+              <Link href="/keranjang" className="button secondary full" onClick={onClose}>
+                Lihat keranjang
               </Link>
             )}
             <small>Stok ditahan setelah checkout.</small>
@@ -222,11 +236,9 @@ function Cart({ cart, error, onClose }: { cart: CartItem[]; error?: string; onCl
           <Icon name="bag" size={36} />
           <h3>Masih kosong</h3>
           <p>Tambahkan barang yang Anda perlukan dari katalog.</p>
-          {!me.user && (
-            <Link href="/masuk" className="button secondary" onClick={onClose}>
-              Masuk untuk berbelanja
-            </Link>
-          )}
+          <Link href={me.user ? "/" : "/masuk"} className="button secondary" onClick={onClose}>
+            {me.user ? "Pilih barang" : "Masuk untuk berbelanja"}
+          </Link>
         </div>
       )}
       <div className="cart-foot">
@@ -241,6 +253,16 @@ export function Checkout() {
     router = useRouter(),
     cart = useData<CartItem[]>("/api/cart"),
     settings = useData<Settings>("/api/settings");
+  const [checkoutError, setCheckoutError] = useState("");
+  const [itemsOpen, setItemsOpen] = useState(false);
+  useEffect(() => {
+    const query = matchMedia("(min-width: 850px)");
+    const sync = () => setItemsOpen(query.matches);
+    sync();
+    query.addEventListener("change", sync);
+    return () => query.removeEventListener("change", sync);
+  }, []);
+  const [draft, setDraft] = useState({ recipient: "", phone: "", address: "" });
   const [method, setMethod] = useState("bank"),
     key = useRef("");
   useEffect(() => {
@@ -275,7 +297,7 @@ export function Checkout() {
     total = subtotal + (c?.shipping_fee || 0);
   return (
     <>
-      <Link className="back-link" href="/">
+      <Link className="back-link" href="/keranjang">
         Kembali ke keranjang
       </Link>
       <div className="page-heading">
@@ -284,19 +306,28 @@ export function Checkout() {
           <p>Periksa alamat dan jumlah sebelum membuat pesanan.</p>
         </div>
       </div>
+      <ErrorBox message={checkoutError} />
       <div className="checkout-layout">
         <section>
           <ActionForm
             label="Buat pesanan"
             onSubmit={async (f) => {
-              const order = await api<{ id: string }>("/api/checkout", "POST", {
-                key: key.current,
-                recipient: f.get("recipient"),
-                phone: f.get("phone"),
-                address: f.get("address"),
-                payment_method: method,
-                expected_total: total,
-              });
+              setCheckoutError("");
+              let order: { id: string };
+              try {
+                order = await api<{ id: string }>("/api/checkout", "POST", {
+                  key: key.current,
+                  recipient: f.get("recipient"),
+                  phone: f.get("phone"),
+                  address: f.get("address"),
+                  payment_method: method,
+                  expected_total: total,
+                });
+              } catch (error) {
+                setCheckoutError((error as Error).message);
+                if ((error as { status?: number }).status === 409) changed();
+                return;
+              }
               sessionStorage.removeItem("kk_checkout_key");
               changed();
               router.push("/pesanan/" + order.id);
@@ -306,14 +337,39 @@ export function Checkout() {
               <h2>Alamat pengiriman</h2>
               <div className="two-fields">
                 <Field label="Nama penerima">
-                  <input name="recipient" autoComplete="name" maxLength={100} required />
+                  <input
+                    name="recipient"
+                    value={draft.recipient}
+                    onChange={(e) => setDraft({ ...draft, recipient: e.target.value })}
+                    autoComplete="name"
+                    maxLength={100}
+                    required
+                  />
                 </Field>
                 <Field label="Nomor HP">
-                  <input name="phone" type="tel" autoComplete="tel" minLength={8} maxLength={25} required />
+                  <input
+                    name="phone"
+                    value={draft.phone}
+                    onChange={(e) => setDraft({ ...draft, phone: e.target.value })}
+                    type="tel"
+                    autoComplete="tel"
+                    minLength={8}
+                    maxLength={25}
+                    required
+                  />
                 </Field>
               </div>
               <Field label="Alamat lengkap" hint="Sertakan jalan, nomor rumah, kelurahan, kecamatan, kota, provinsi, dan kode pos.">
-                <textarea name="address" autoComplete="street-address" rows={4} minLength={15} maxLength={1000} required />
+                <textarea
+                  name="address"
+                  value={draft.address}
+                  onChange={(e) => setDraft({ ...draft, address: e.target.value })}
+                  autoComplete="street-address"
+                  rows={4}
+                  minLength={15}
+                  maxLength={1000}
+                  required
+                />
               </Field>
             </section>
             <section className="form-section">
@@ -349,18 +405,20 @@ export function Checkout() {
           </ActionForm>
         </section>
         <aside className="receipt">
-          <h2>Ringkasan pesanan</h2>
-          {cart.data.map((p) => (
-            <div className="receipt-item" key={p.id}>
-              <span>
-                {p.name}
-                <small>
-                  {p.quantity} {p.unit} × {money(p.price)}
-                </small>
-              </span>
-              <strong>{money(p.price * p.quantity)}</strong>
-            </div>
-          ))}
+          <details className="checkout-items" open={itemsOpen} onToggle={(e) => setItemsOpen(e.currentTarget.open)}>
+            <summary>Ringkasan barang ({cart.data.length})</summary>
+            {cart.data.map((p) => (
+              <div className="receipt-item" key={p.id}>
+                <span>
+                  {p.name}
+                  <small>
+                    {p.quantity} {p.unit} × {money(p.price)}
+                  </small>
+                </span>
+                <strong>{money(p.price * p.quantity)}</strong>
+              </div>
+            ))}
+          </details>
           <div className="receipt-lines">
             <div>
               <span>Subtotal</span>
@@ -377,6 +435,26 @@ export function Checkout() {
           </div>
         </aside>
       </div>
+    </>
+  );
+}
+
+export function CartPage() {
+  const cart = useData<CartItem[]>("/api/cart");
+  return (
+    <>
+      <div className="page-heading">
+        <div>
+          <h1>Keranjang</h1>
+          <p>Periksa barang dan jumlah sebelum checkout.</p>
+        </div>
+        <Link className="button secondary" href="/">
+          Lanjut belanja
+        </Link>
+      </div>
+      <section className="cart-page">
+        <Cart cart={cart.data || []} error={cart.error} loading={cart.loading} />
+      </section>
     </>
   );
 }

@@ -55,7 +55,7 @@ Username harus cocok dengan seller yang ada. Pemulihan mengganti password menjad
 4. Buyer mengunggah satu bukti JPEG/PNG/WebP maksimal 1.500.000 byte sebelum tenggat. Server memeriksa MIME dan signature; bukti tidak bisa diganti. Retry file identik tidak membuat bukti baru.
 5. Bukti diterima mempertahankan stok selama menunggu pemeriksaan. Alarm melepas stok pesanan tanpa bukti yang kedaluwarsa. Daftar/detail pesanan juga menyegarkan kedaluwarsa sebelum dibaca.
 6. Seller menyetujui atau menolak. Penolakan wajib beralasan. Keputusan final; stok dikembalikan hanya sekali jika ditolak/kedaluwarsa.
-7. Pesanan disetujui dilanjutkan ke dikirim (kurir dan resi wajib), lalu selesai oleh seller. Tidak ada integrasi kurir atau konfirmasi otomatis.
+7. Pesanan disetujui dilanjutkan ke dikirim (nama kurir wajib, tanpa nomor resi), lalu selesai oleh seller. Tidak ada integrasi kurir atau konfirmasi otomatis.
 8. Form edit produk membawa `revision`. Jika checkout atau tindakan lain mengubah stok, form lama ditolak supaya tidak menimpa stok terbaru. Stok pada form berarti stok tersedia di luar reservasi.
 
 ## API
@@ -81,6 +81,12 @@ Semua endpoint menggunakan same-origin cookie. Mutasi wajib membawa header `Orig
 | `POST /api/password`                                                 | Kedua role; current dan password baru; sesi lain dicabut            |
 | `GET /api/sessions`, `POST /api/sessions/revoke`, `POST /api/logout` | Kedua role; sesi hanya milik sendiri                                |
 
+`GET /api/reports/sales?from=YYYY-MM-DD&to=YYYY-MM-DD&page=0` khusus seller. Rentang tanggal inklusif dalam WIB dan dihitung berdasarkan `decided_at` untuk pesanan approved/shipped/completed. Respons berisi `summary`, `daily`, `products` (10 terlaris berdasarkan unit), `transactions` (30 per halaman), dan `page`. Harga memakai snapshot pesanan; laporan tidak menghitung laba dan tidak memiliki ekspor.
+
+`PUT /api/settings` mendukung pembaruan parsial. Field yang tidak dikirim dipertahankan di coordinator agar penyimpanan bagian ongkir dan pembayaran tidak saling menimpa. `POST /api/orders/:id/ship` menerima `{ "courier": "Nama kurir" }` (wajib, maksimal 80 karakter). Nomor resi dihapus dari API dan database melalui migrasi `0003_remove_tracking.sql`; nama kurir yang sudah tersimpan tetap dipertahankan. Jalankan migrasi sebelum menjalankan versi ini.
+
+Halaman pembeli `/keranjang` berbagi kontrol dengan panel/popup katalog. Pengaturan memakai bagian URL `#akun`, `#keamanan`, `#perangkat`, `#pengiriman`, dan `#pembayaran` (dua terakhir khusus seller). Laporan berada di `/seller/laporan`.
+
 Daftar pesanan dan user memakai `page` mulai 0, 30 baris per halaman. Daftar pesanan mendukung `status`, user mendukung `q`. Katalog dibatasi 500 produk untuk toko tunggal ini.
 
 ## Verifikasi
@@ -93,7 +99,9 @@ npm run build
 
 Tes menjalankan Workers + D1 + Durable Objects di Miniflare: role/CSRF, persaingan stok terakhir, checkout bersamaan dengan key sama, snapshot harga/pembayaran, edit stok kedaluwarsa, alarm berulang, bukti sekali unggah dan batas ukuran, akses lintas akun, keputusan bersamaan/final, pengiriman, reset password, sesi, dan rate limit.
 
-Browser otomatis tidak tersedia pada sesi implementasi; screenshot dan interaksi browser desktop/mobile belum diverifikasi. Struktur responsif, focus keyboard, dialog native, serta reduced motion sudah diterapkan. Lakukan tinjauan visual sebelum peluncuran operasional.
+Verifikasi perubahan UI: typecheck, 15 tes integrasi, dan build berhasil. Tes tambahan mencakup pengiriman dengan nama kurir saja, retry, penghapusan kolom resi, penyimpanan parsial/bersamaan, pembatasan akses laporan, batas tanggal WIB, snapshot harga, paginasi, dan pencegahan penghitungan ganda.
+
+Pemeriksaan visual belum terverifikasi: koneksi browser tidak tersedia, dan helper computer-use lokal gagal terhubung (`native pipe unavailable`). Sebelum peluncuran, periksa lebar 320, 375, 390, 768, 1024, dan 1440 px untuk overflow, navbar/menu akun, fokus/Escape/klik luar dialog, keranjang, checkout, pengaturan belum disimpan, dan laporan. Tidak ada screenshot yang sudah diverifikasi pada sesi ini.
 
 `npm audit` masih melaporkan advisory moderate pada dependency transitif pembuat gambar OpenGraph bawaan Vinext, yang tidak dipakai aplikasi ini. Hindari `npm audit fix --force` yang menawarkan downgrade major framework. Vite sudah diperbarui ke patch 8.3.6.
 

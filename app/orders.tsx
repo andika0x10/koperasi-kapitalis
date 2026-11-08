@@ -3,7 +3,7 @@ import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { money, date, statusLabel } from "../lib/types";
 import type { Order, Settings, Status } from "../lib/types";
-import { useApp, useData, Icon, ErrorBox, Loading, Empty, Field, ActionForm, image, StatusBadge, Pagination } from "./ui";
+import { useApp, useData, Icon, ErrorBox, Loading, Empty, Field, ActionForm, image, StatusBadge, Pagination, CopyButton } from "./ui";
 export function Orders({ seller = false }: { seller?: boolean }) {
   const [status, setStatus] = useState(""),
     [page, setPage] = useState(0),
@@ -140,6 +140,35 @@ export function OrderDetail({ id }: { id: string }) {
         </div>
         <StatusBadge status={o.status} />
       </div>
+      {seller && ["pending", "review", "approved", "shipped"].includes(o.status) && (
+        <div className="next-action">
+          <div>
+            <strong>
+              {o.status === "pending"
+                ? "Menunggu pembayaran pembeli"
+                : o.status === "review"
+                  ? "Pembayaran perlu diperiksa"
+                  : o.status === "approved"
+                    ? "Pesanan siap dikirim"
+                    : "Pengiriman sedang berlangsung"}
+            </strong>
+            <p>
+              {o.status === "pending"
+                ? "Tindakan tersedia setelah pembeli mengunggah bukti."
+                : o.status === "review"
+                  ? "Cocokkan bukti dengan mutasi rekening sebelum menyetujui."
+                  : o.status === "approved"
+                    ? "Tandai dikirim setelah barang diserahkan untuk pengiriman."
+                    : "Tandai selesai setelah barang diterima pembeli."}
+            </p>
+          </div>
+          {o.status !== "pending" && (
+            <a className="button primary" href="#order-action">
+              {o.status === "review" ? "Periksa pembayaran" : o.status === "approved" ? "Tandai dikirim" : "Tandai selesai"}
+            </a>
+          )}
+        </div>
+      )}
       <div className="order-layout">
         <section className="order-main">
           {o.status === "pending" && (
@@ -222,7 +251,10 @@ export function OrderDetail({ id }: { id: string }) {
                   </div>
                   <div>
                     <dt>Nomor rekening</dt>
-                    <dd className="account-number">{payment.bank_account}</dd>
+                    <dd className="account-number">
+                      {payment.bank_account}
+                      <CopyButton value={payment.bank_account} label="Nomor rekening" />
+                    </dd>
                   </div>
                   <div>
                     <dt>Atas nama</dt>
@@ -300,7 +332,7 @@ export function OrderDetail({ id }: { id: string }) {
             </section>
           )}
           {seller && o.status === "review" && (
-            <section className="decision-panel">
+            <section className="decision-panel" id="order-action">
               <h2>Keputusan pembayaran</h2>
               <p>Periksa mutasi rekening Anda sebelum mengambil keputusan final.</p>
               <div className="button-row">
@@ -331,40 +363,37 @@ export function OrderDetail({ id }: { id: string }) {
             </section>
           )}
           {seller && o.status === "approved" && (
-            <section className="detail-section">
-              <h2>Catat pengiriman</h2>
+            <section className="detail-section" id="order-action">
+              <h2>Siap dikirim</h2>
               <ActionForm
                 label="Tandai dikirim"
                 onSubmit={async (f) => {
-                  await api("/api/orders/" + o.id + "/ship", "POST", { courier: f.get("courier"), tracking: f.get("tracking") });
+                  if (!window.confirm("Tandai pesanan ini sudah dikirim?")) return;
+                  await api("/api/orders/" + o.id + "/ship", "POST", { courier: f.get("courier") });
                   changed();
-                  notify("Pengiriman dicatat.");
+                  notify("Pesanan ditandai dikirim.");
                 }}
               >
-                <div className="two-fields">
-                  <Field label="Kurir">
-                    <input name="courier" maxLength={80} required />
-                  </Field>
-                  <Field label="Nomor resi">
-                    <input name="tracking" maxLength={100} required />
-                  </Field>
-                </div>
+                <Field label="Nama kurir">
+                  <input name="courier" maxLength={80} required />
+                </Field>
+                <p>Konfirmasi setelah barang diserahkan untuk pengiriman.</p>
               </ActionForm>
             </section>
           )}
           {(o.status === "shipped" || o.status === "completed") && (
-            <section className="detail-section">
+            <section className="detail-section" id="order-action">
               <h2>Informasi pengiriman</h2>
-              <dl className="payment-details">
-                <div>
-                  <dt>Kurir</dt>
-                  <dd>{o.courier}</dd>
-                </div>
-                <div>
-                  <dt>Nomor resi</dt>
-                  <dd>{o.tracking}</dd>
-                </div>
-              </dl>
+              {o.courier ? (
+                <dl className="payment-details">
+                  <div>
+                    <dt>Nama kurir</dt>
+                    <dd>{o.courier}</dd>
+                  </div>
+                </dl>
+              ) : (
+                <p>Pesanan sudah dikirim.</p>
+              )}
               {seller && o.status === "shipped" && (
                 <ActionForm
                   label="Tandai selesai"

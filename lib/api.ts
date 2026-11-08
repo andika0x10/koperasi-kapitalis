@@ -2,6 +2,7 @@ import type { Env, Auth } from "./env";
 import { authenticate, createSession, sessionCookie, limit, role, unlocked } from "./auth";
 import { body, json, failure } from "./http";
 import { digest, hashPassword, HttpError, text, validPassword, verifyPassword } from "./security";
+import { salesReport } from "./reports";
 import type { Order } from "./types";
 
 export async function api(request: Request, env: Env): Promise<Response> {
@@ -112,6 +113,10 @@ export async function api(request: Request, env: Env): Promise<Response> {
       return res;
     }
     unlocked(auth);
+    if (path === "/api/reports/sales") {
+      role(auth, "seller");
+      return json(await salesReport(db, url));
+    }
     if (path === "/api/cart") {
       role(auth, "buyer");
       return json((await db.prepare("SELECT p.*,c.quantity FROM cart_items c JOIN products p ON p.id=c.product_id WHERE c.user_id=? ORDER BY p.name").bind(auth.id).all()).results);

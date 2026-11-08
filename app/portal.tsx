@@ -4,10 +4,12 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import type { User } from "../lib/types";
 import { Context, Icon, Loading, ErrorBox, Empty } from "./ui";
-import { Catalog, Checkout } from "./shop";
+import { Catalog, Checkout, CartPage } from "./shop";
 import { Orders, OrderDetail } from "./orders";
 import { AuthPage, AccountSettings } from "./account";
 import { ManageProducts, Users } from "./seller";
+import { Navigation } from "./navigation";
+import { SalesReport } from "./reports";
 export default function Portal() {
   const [me, setMe] = useState<{ user: User | null; csrf: string | null }>({ user: null, csrf: null }),
     [ready, setReady] = useState(false),
@@ -50,7 +52,7 @@ export default function Portal() {
           setMe({ user: null, csrf: null });
           router.push("/masuk");
         }
-        throw new Error((payload as { error?: string }).error || "Permintaan gagal.");
+        throw Object.assign(new Error((payload as { error?: string }).error || "Permintaan gagal."), { status: res.status });
       }
       return payload as T;
     },
@@ -60,7 +62,6 @@ export default function Portal() {
   useEffect(() => {
     if (ready && me.user?.must_change_password && path !== "/pengaturan") router.replace("/pengaturan");
   }, [ready, me.user, path, router]);
-  const seller = me.user?.role === "seller";
   async function logout() {
     try {
       await api("/api/logout", "POST");
@@ -77,70 +78,7 @@ export default function Portal() {
         <a className="skip-link" href="#main">
           Lewati ke konten
         </a>
-        <header className="header">
-          <div className="header-inner">
-            <Link href={seller ? "/seller" : "/"} className="wordmark">
-              Koperasi{" "}
-              <strong>
-                Kapitalis<span>.</span>
-              </strong>
-            </Link>
-            <nav aria-label="Navigasi utama">
-              {seller ? (
-                <>
-                  <Nav href="/seller" active={path === "/seller" || path.startsWith("/seller/pesanan/")}>
-                    Pesanan
-                  </Nav>
-                  <Nav href="/seller/produk" active={path === "/seller/produk"}>
-                    Produk
-                  </Nav>
-                  <Nav href="/seller/users" active={path === "/seller/users"}>
-                    Pengguna
-                  </Nav>
-                </>
-              ) : (
-                <>
-                  <Nav href="/" active={path === "/"}>
-                    Produk
-                  </Nav>
-                  {me.user && (
-                    <Nav href="/pesanan" active={path.startsWith("/pesanan")}>
-                      Pesanan saya
-                    </Nav>
-                  )}
-                </>
-              )}
-              {me.user && (
-                <Nav href="/pengaturan" active={path === "/pengaturan"}>
-                  Pengaturan
-                </Nav>
-              )}
-            </nav>
-            <div className="account">
-              {me.user ? (
-                <>
-                  <span className="username">
-                    <Icon name="user" size={17} />
-                    {me.user.username}
-                    {seller && <span className="role-tag">Seller</span>}
-                  </span>
-                  <button className="text-button" onClick={logout}>
-                    Keluar
-                  </button>
-                </>
-              ) : (
-                <>
-                  <Link className="text-button" href="/masuk">
-                    Masuk
-                  </Link>
-                  <Link className="button small primary" href="/daftar">
-                    Daftar
-                  </Link>
-                </>
-              )}
-            </div>
-          </div>
-        </header>
+        <Navigation path={path} logout={logout} />
         <main className="main" id="main">
           {!ready ? <Loading /> : bootError ? <ErrorBox message={bootError} /> : <Screen path={path} />}
         </main>
@@ -159,13 +97,6 @@ export default function Portal() {
         )}
       </div>
     </Context.Provider>
-  );
-}
-function Nav({ href, active, children }: { href: string; active: boolean; children: React.ReactNode }) {
-  return (
-    <Link className={active ? "nav-link active" : "nav-link"} href={href} aria-current={active ? "page" : undefined}>
-      {children}
-    </Link>
   );
 }
 function Screen({ path }: { path: string }) {
@@ -190,11 +121,13 @@ function Screen({ path }: { path: string }) {
     );
   if (path === "/seller") return <Orders seller />;
   if (path === "/seller/produk") return <ManageProducts />;
+  if (path === "/seller/laporan") return <SalesReport />;
+  if (path === "/keranjang" && me.user.role === "buyer") return <CartPage />;
   if (path === "/seller/users") return <Users />;
   if (path === "/checkout" && me.user.role === "buyer") return <Checkout />;
   if (path === "/pesanan") return <Orders />;
   const match = path.match(/^\/(?:seller\/)?pesanan\/([^/]+)$/);
-  if (match) return <OrderDetail id={match[1]} />;
+  if (match) return <OrderDetail key={match[1]} id={match[1]} />;
   return (
     <Empty title="Halaman tidak ditemukan">
       <Link href="/">Kembali ke produk</Link>

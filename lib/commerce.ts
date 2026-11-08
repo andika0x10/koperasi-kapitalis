@@ -248,8 +248,9 @@ export class Commerce extends DurableObject<Env> {
       return json({ id: file.id }, 201);
     }
     if (path === "/api/settings" && method === "PUT") {
-      const data = await body(request),
-        shipping = integer(data.shipping_fee, "Ongkir", 0, 10000000),
+      const current = await db.prepare("SELECT * FROM settings WHERE id=1").first<Record<string, unknown>>();
+      const data = { ...current, ...(await body(request)) },
+        shipping = data.shipping_fee === null ? null : integer(data.shipping_fee, "Ongkir", 0, 10000000),
         bank = text(data.bank_name ?? "", "Bank", 80, 0),
         account = text(data.bank_account ?? "", "Rekening", 80, 0),
         holder = text(data.bank_holder ?? "", "Nama pemilik", 120, 0),
@@ -280,12 +281,14 @@ export class Commerce extends DurableObject<Env> {
           this.audit(auth, String(data.status), order.id),
         ]);
       } else if (action === "ship") {
-        const courier = text(data.courier, "Kurir", 80),
-          tracking = text(data.tracking, "Nomor resi", 100);
-        if (order.status === "shipped" && order.courier === courier && order.tracking === tracking) return json({ ok: true });
+        const courier = text(data.courier, "Nama kurir", 80);
+        if (["shipped", "completed"].includes(order.status)) {
+          if (order.courier === courier) return json({ ok: true });
+          throw new HttpError(409, "Pesanan sudah dikirim dengan nama kurir yang tersimpan.");
+        }
         if (order.status !== "approved") throw new HttpError(409, "Hanya pesanan disetujui yang dapat dikirim.");
         await db.batch([
-          db.prepare("UPDATE orders SET status='shipped',courier=?,tracking=?,shipped_at=? WHERE id=? AND status='approved'").bind(courier, tracking, Date.now(), order.id),
+          db.prepare("UPDATE orders SET status='shipped',courier=?,shipped_at=? WHERE id=? AND status='approved'").bind(courier, Date.now(), order.id),
           this.audit(auth, "shipped", order.id),
         ]);
       } else {

@@ -245,7 +245,7 @@ test("proof received before deadline survives expiry and approval races; shippin
   assert.equal((await ok(await req(a, "/api/orders/" + o.id))).status, "approved");
   assert.equal(await stock(p), 1);
   await ok(await req(seller, "/api/orders/" + o.id + "/complete", "POST", {}), 409);
-  await ok(await req(seller, "/api/orders/" + o.id + "/ship", "POST", { courier: "Kurir uji", tracking: "RESI123" }));
+  await ok(await req(seller, "/api/orders/" + o.id + "/ship", "POST", { courier: "Kurir uji" }));
   await ok(await req(seller, "/api/orders/" + o.id + "/complete", "POST", {}));
   assert.equal((await ok(await req(a, "/api/orders/" + o.id))).status, "completed");
 });
@@ -264,6 +264,119 @@ test("archive does not mutate historical orders and releases reserved stock when
 async function cartResponse(client: Client, p: string) {
   return req(client, "/api/cart", "PUT", { product_id: p, quantity: 1 });
 }
+test("shipping requires only courier name, safe retries and role checks", async () => {
+  await cleanCart();
+  const p = await product(3);
+  await cart(a, p);
+  const o = await ok(await checkout(a), 201);
+  await ok(await req(a, `/api/orders/${o.id}/ship`, "POST", {}), 403);
+  await ok(await req(seller, `/api/orders/${o.id}/ship`, "POST", { courier: "Kurir uji" }), 409);
+  await ok(await req(a, `/api/orders/${o.id}/proof`, "POST", png));
+  await ok(await req(seller, `/api/orders/${o.id}/decision`, "POST", { status: "approved" }));
+  await ok(await req(seller, `/api/orders/${o.id}/ship`, "POST", { courier: "x".repeat(81) }), 400);
+  await ok(await req(seller, `/api/orders/${o.id}/ship`, "POST", png), 415);
+  await ok(await req(seller, `/api/orders/${o.id}/ship`, "POST", {}), 400);
+  await ok(await req(seller, `/api/orders/${o.id}/ship`, "POST", { courier: "   " }), 400);
+  await ok(await req(seller, `/api/orders/${o.id}/ship`, "POST", { courier: "Kurir uji" }));
+  await ok(await req(seller, `/api/orders/${o.id}/ship`, "POST", { courier: "Kurir uji" }));
+  const detail = await ok(await req(a, `/api/orders/${o.id}`));
+  assert.equal(detail.status, "shipped");
+  assert.equal(detail.courier, "Kurir uji");
+  assert.equal("tracking" in detail, false);
+  const columns = await db.prepare("PRAGMA table_info(orders)").all<{ name: string }>();
+  assert.equal(
+    columns.results.some((column) => column.name === "tracking"),
+    false
+  );
+  await ok(await req(seller, `/api/orders/${o.id}/ship`, "POST", { courier: "Kurir berbeda" }), 409);
+  assert.equal(detail.events.filter((e: any) => e.status === "shipped").length, 1);
+  await ok(await req(seller, `/api/orders/${o.id}/complete`, "POST", {}));
+  await ok(await req(seller, `/api/orders/${o.id}/ship`, "POST", { courier: "Kurir uji" }));
+  assert.equal(await stock(p), 2);
+});
+
+test("section settings saves preserve other sections, validate and respect roles", async () => {
+  const initial = await ok(await req(seller, "/api/settings"));
+  await ok(await req(a, "/api/settings", "PUT", { shipping_fee: 2000 }), 403);
+  await ok(await req(seller, "/api/settings", "PUT", { shipping_fee: 2000 }));
+  let settings = await ok(await req(seller, "/api/settings"));
+  assert.deepEqual(settings, { ...initial, shipping_fee: 2000 });
+  await ok(await req(seller, "/api/settings", "PUT", { bank_name: "Bank baru", bank_account: "999", bank_holder: "Pemilik baru", qris_id: null }));
+  settings = await ok(await req(seller, "/api/settings"));
+  assert.equal(settings.shipping_fee, 2000);
+  assert.equal(settings.bank_account, "999");
+  await ok(await req(seller, "/api/settings", "PUT", { bank_account: "" }), 400);
+  await ok(await req(seller, "/api/settings", "PUT", { shipping_fee: -1 }), 400);
+  await ok(await req(seller, "/api/settings", "PUT", initial));
+  await Promise.all([
+    ok(await req(seller, "/api/settings", "PUT", { shipping_fee: 2500 })),
+    ok(await req(seller, "/api/settings", "PUT", { bank_name: "Bank paralel", bank_account: "888", bank_holder: "Seller paralel" })),
+  ]);
+  settings = await ok(await req(seller, "/api/settings"));
+  assert.equal(settings.shipping_fee, 2500);
+  assert.equal(settings.bank_account, "888");
+  await ok(await req(seller, "/api/settings", "PUT", initial));
+});
+
+test("sales reports: WIB boundaries, approval date, snapshots, exclusions and pagination", async () => {
+  const path = "/api/reports/sales?from=2025-11-01&to=2025-11-30";
+  await ok(await req(null, path), 401);
+  await ok(await req(a, path), 403);
+  assert.equal((await ok(await req(seller, path))).summary.orders, 0);
+  for (const dates of ["from=2025-02-30&to=2025-03-01", "from=2025-12-01&to=2025-11-01", "from=bad&to=2025-11-01", "from=2025-11-01"]) {
+    await ok(await req(seller, "/api/reports/sales?" + dates), 400);
+  }
+  await ok(await req(seller, path + "&page=-1"), 400);
+  const p = await product(100, 5000);
+  async function seed(index: number, decided: number, status = "approved") {
+    const id = `report-${index}`;
+    await db
+      .prepare(
+        "INSERT INTO orders(id,user_id,checkout_key,status,recipient,phone,address,subtotal,shipping_fee,total,payment_method,payment_snapshot,created_at,expires_at) VALUES(?,?,?,'pending','Penerima','0812345678','Alamat laporan',5000,1000,6000,'bank','{}',?,?)"
+      )
+      .bind(id, a.id, id, Date.parse("2025-10-01T00:00:00Z"), Date.now() + 3600000)
+      .run();
+    await db.prepare("INSERT INTO order_items(id,order_id,product_id,name,unit,price,quantity) VALUES(?,?,?,'Nama snapshot','kg',5000,1)").bind(id, id, p).run();
+    if (status === "pending") return;
+    await db.prepare("UPDATE orders SET status='review' WHERE id=?").bind(id).run();
+    if (status === "review") return;
+    await db
+      .prepare("UPDATE orders SET status=?,decided_at=? WHERE id=?")
+      .bind(status === "rejected" ? "rejected" : "approved", decided, id)
+      .run();
+    if (["shipped", "completed"].includes(status)) await db.prepare("UPDATE orders SET status='shipped' WHERE id=?").bind(id).run();
+    if (status === "completed") await db.prepare("UPDATE orders SET status='completed' WHERE id=?").bind(id).run();
+  }
+  const start = Date.parse("2025-10-31T17:00:00Z"),
+    end = Date.parse("2025-11-30T17:00:00Z");
+  for (let n = 0; n < 34; n++) await seed(n, start + n, n === 1 ? "shipped" : n === 2 ? "completed" : "approved");
+  await seed(34, end - 1);
+  await seed(35, start - 1);
+  await seed(36, end);
+  await seed(37, start, "pending");
+  await seed(38, start, "review");
+  await seed(39, start, "rejected");
+  await db.prepare("UPDATE products SET name='Nom actuel',price=99000 WHERE id=?").bind(p).run();
+  const report = await ok(await req(seller, path));
+  assert.deepEqual(report.summary, { orders: 35, total: 210000, subtotal: 175000, shipping_fee: 35000 });
+  assert.deepEqual(report.daily, [
+    { day: "2025-11-01", orders: 34, total: 204000 },
+    { day: "2025-11-30", orders: 1, total: 6000 },
+  ]);
+  assert.equal(report.products[0].name, "Nama snapshot");
+  assert.equal(report.products[0].quantity, 35);
+  assert.equal(report.products[0].subtotal, 175000);
+  assert.equal(report.transactions.length, 30);
+  const second = await ok(await req(seller, path + "&page=1"));
+  assert.equal(second.transactions.length, 5);
+  assert.equal(new Set([...report.transactions, ...second.transactions].map((o: any) => o.id)).size, 35);
+  await ok(await req(seller, "/api/orders/report-0/ship", "POST", { courier: "Kurir laporan" }));
+  await ok(await req(seller, "/api/orders/report-0/complete", "POST", {}));
+  assert.deepEqual((await ok(await req(seller, path))).summary, report.summary);
+  const singleDay = await ok(await req(seller, "/api/reports/sales?from=2025-11-30&to=2025-11-30"));
+  assert.equal(singleDay.summary.orders, 1);
+});
+
 test("password reset revokes sessions, enforces password change, and supports session management", async () => {
   const reset = await ok(await req(seller, "/api/users/" + b.id + "/reset", "POST", {}));
   await ok(await req(b, "/api/sessions"), 401);

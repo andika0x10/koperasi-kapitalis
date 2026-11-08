@@ -43,7 +43,7 @@ export function useData<T>(url: string | null) {
   }, [url, version, api]);
   return { data, error, loading };
 }
-export function Icon({ name, size = 22 }: { name: "bag" | "search" | "plus" | "minus" | "box" | "close" | "arrow" | "clock" | "user"; size?: number }) {
+export function Icon({ name, size = 22 }: { name: "bag" | "search" | "plus" | "minus" | "box" | "close" | "arrow" | "clock" | "user" | "menu"; size?: number }) {
   const paths = {
     bag: (
       <>
@@ -57,6 +57,7 @@ export function Icon({ name, size = 22 }: { name: "bag" | "search" | "plus" | "m
         <path d="m16 16 4 4" />
       </>
     ),
+    menu: <path d="M4 6h16M4 12h16M4 18h16" />,
     plus: <path d="M12 5v14M5 12h14" />,
     minus: <path d="M5 12h14" />,
     box: (
@@ -225,5 +226,66 @@ export function PhotoUpload({ kind, value, onChange, label }: { kind: "product" 
       )}
       <ErrorBox message={error} />
     </div>
+  );
+}
+
+export function Overlay({ open, onClose, title, children, className = "" }: { open: boolean; onClose: () => void; title: string; children: React.ReactNode; className?: string }) {
+  const ref = React.useRef<HTMLDialogElement>(null);
+  const close = React.useRef(onClose);
+  close.current = onClose;
+  useEffect(() => {
+    if (!open) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    ref.current?.showModal();
+    return () => {
+      ref.current?.close();
+      document.body.style.overflow = overflow;
+      previous?.focus();
+    };
+  }, [open]);
+  return (
+    <dialog
+      ref={ref}
+      className={"overlay " + className}
+      aria-label={title}
+      onCancel={(e) => {
+        e.preventDefault();
+        close.current();
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) close.current();
+      }}
+    >
+      <div className="overlay-content">
+        <div className="modal-header">
+          <h2>{title}</h2>
+          <button className="icon-button" aria-label={"Tutup " + title} onClick={onClose}>
+            <Icon name="close" />
+          </button>
+        </div>
+        {children}
+      </div>
+    </dialog>
+  );
+}
+export function CopyButton({ value, label }: { value: string; label: string }) {
+  const { notify } = useApp();
+  return (
+    <button
+      type="button"
+      className="text-button"
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(value);
+          notify(label + " disalin.");
+        } catch {
+          notify("Belum bisa menyalin. Pilih dan salin teks secara manual.");
+        }
+      }}
+    >
+      Salin {label.toLowerCase()}
+    </button>
   );
 }

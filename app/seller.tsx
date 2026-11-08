@@ -224,7 +224,7 @@ export function Users() {
         </Empty>
       ) : (
         <div className="table-wrap">
-          <table>
+          <table className="users-table">
             <thead>
               <tr>
                 <th>Username</th>
