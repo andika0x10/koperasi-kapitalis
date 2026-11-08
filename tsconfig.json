@@ -14,10 +14,7 @@
     "isolatedModules": true,
     "jsx": "preserve",
     "incremental": true,
-    "types": [
-        "node",
-        "vinext/types"
-    ],
+    "types": ["node", "vinext/types"],
     "paths": {
       "@/*": ["./*"]
     }

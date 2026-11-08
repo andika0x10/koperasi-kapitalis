@@ -1,35 +1,48 @@
 {
-	"name": "koperasi-kapitalis",
-	"version": "0.1.0",
-	"private": true,
-	"packageManager": "npm",
-	"dependencies": {
-		"@vinext/cloudflare": "latest",
-		"react": "latest",
-		"react-dom": "latest",
-		"react-server-dom-webpack": "latest",
-		"vinext": "latest"
-	},
-	"devDependencies": {
-		"@cloudflare/vite-plugin": "beta",
-		"@tailwindcss/postcss": "latest",
-		"@types/node": "latest",
-		"@types/react": "latest",
-		"@types/react-dom": "latest",
-		"@vitejs/plugin-react": "latest",
-		"@vitejs/plugin-rsc": "latest",
-		"cf": "^1.0.0-beta.28",
-		"tailwindcss": "latest",
-		"typescript": "latest",
-		"vite": "8.3.0"
-	},
-	"type": "module",
-	"scripts": {
-		"dev": "vite dev",
-		"build": "vite build",
-		"start": "vite preview",
-		"deploy": "vinext-cloudflare deploy",
-		"preview": "npm run build && npm run start --",
-		"cf-typegen": "cf workers types"
-	}
+  "name": "koperasi-kapitalis",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "npm",
+  "dependencies": {
+    "@fontsource-variable/public-sans": "^5.3.0",
+    "@vinext/cloudflare": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "react-server-dom-webpack": "latest",
+    "vinext": "latest"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "beta",
+    "@cloudflare/workers-types": "^5.20261108.1",
+    "@tailwindcss/postcss": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@vitejs/plugin-react": "latest",
+    "@vitejs/plugin-rsc": "latest",
+    "cf": "^1.0.0-beta.28",
+    "esbuild": "^0.28.2",
+    "miniflare": "^5.20261104.0-beta",
+    "prettier": "3.9.10",
+    "tailwindcss": "latest",
+    "tsx": "^4.23.15",
+    "typescript": "latest",
+    "vite": "^8.3.6",
+    "wrangler": "^4.158.0"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "start": "vite preview",
+    "deploy": "node scripts/deploy.mjs",
+    "preview": "npm run build && npm run start --",
+    "cf-typegen": "cf workers types",
+    "format": "prettier --write .",
+    "test": "node --import tsx --test tests/integration.test.ts",
+    "typecheck": "tsc --noEmit",
+    "db:migrate:local": "wrangler d1 migrations apply DB --config wrangler.db.jsonc --local --persist-to .cloudflare/state",
+    "db:migrate:remote": "wrangler d1 migrations apply DB --config wrangler.db.jsonc --remote",
+    "seller:bootstrap": "node --import tsx scripts/seller.ts"
+  }
 }

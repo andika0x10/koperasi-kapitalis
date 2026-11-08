@@ -1,11 +1,17 @@
-import { bindings, defineConfig, defineWorker } from "cf/config";
+import { bindings, defineConfig, defineWorker, exports } from "cf/config";
 
 export default defineConfig({
   worker: defineWorker({
     name: "koperasi-kapitalis",
-    entrypoint: "vinext/server/fetch-handler",
+    entrypoint: "./worker.ts",
     compatibilityDate: "2026-11-08",
     compatibilityFlags: ["nodejs_compat"],
+    workersDev: true,
+    observability: { enabled: true, redactQueryString: true, logs: { enabled: true, invocationLogs: true } },
+    exports: {
+      Commerce: exports.durableObject({ storage: "sqlite" }),
+      RateLimiter: exports.durableObject({ storage: "sqlite" }),
+    },
     assets: {
       htmlHandling: "none",
       notFoundHandling: "none",
@@ -13,7 +19,9 @@ export default defineConfig({
     },
     env: {
       ASSETS: bindings.assets(),
-      IMAGES: bindings.images(),
+      DB: bindings.d1({ name: "koperasi-kapitalis-db", id: "55b5e3ad-1dfc-42cb-bffd-7e07fa0375cd" }),
+      COMMERCE: bindings.durableObject({ worker: "koperasi-kapitalis", exportName: "Commerce" }),
+      LIMITER: bindings.durableObject({ worker: "koperasi-kapitalis", exportName: "RateLimiter" }),
     },
   }),
 });
