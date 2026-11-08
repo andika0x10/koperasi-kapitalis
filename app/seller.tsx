@@ -1,8 +1,8 @@
 "use client";
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState } from "react";
 import { money, date } from "../lib/types";
 import type { User, Product } from "../lib/types";
-import { useApp, useData, Icon, ErrorBox, Loading, Empty, Field, ActionForm, image, PhotoUpload, Pagination } from "./ui";
+import { useApp, useData, Icon, ErrorBox, Loading, Empty, Field, ActionForm, image, PhotoUpload, Pagination, Overlay } from "./ui";
 export function ManageProducts() {
   const { api, changed, notify } = useApp(),
     { data, error, loading } = useData<{ products: Product[] }>("/api/products?all=1"),
@@ -107,29 +107,9 @@ export function ManageProducts() {
 function ProductEditor({ product, onClose }: { product: Product | "new"; onClose: () => void }) {
   const { api, changed, notify } = useApp(),
     p = product === "new" ? null : product,
-    [photo, setPhoto] = useState(p?.photo_id || null),
-    ref = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
-    const el = ref.current;
-    el?.showModal();
-    return () => el?.close();
-  }, []);
+    [photo, setPhoto] = useState(p?.photo_id || null);
   return (
-    <dialog
-      ref={ref}
-      className="modal"
-      aria-labelledby="product-title"
-      onCancel={onClose}
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      <div className="modal-header">
-        <h2 id="product-title">{p ? "Edit produk" : "Tambah produk"}</h2>
-        <button type="button" className="icon-button" aria-label="Tutup formulir produk" onClick={onClose}>
-          <Icon name="close" />
-        </button>
-      </div>
+    <Overlay open onClose={onClose} title={p ? "Edit produk" : "Tambah produk"} className="product-overlay">
       <ActionForm
         label={p ? "Simpan perubahan" : "Tambah produk"}
         onSubmit={async (f) => {
@@ -173,7 +153,7 @@ function ProductEditor({ product, onClose }: { product: Product | "new"; onClose
         </div>
         <PhotoUpload kind="product" value={photo} onChange={setPhoto} label="Foto barang" />
       </ActionForm>
-    </dialog>
+    </Overlay>
   );
 }
 export function Users() {

@@ -12,6 +12,26 @@ export function Catalog() {
     [category, setCategory] = useState(""),
     [busy, setBusy] = useState(""),
     [cartOpen, setCartOpen] = useState(false);
+  const mobileCartRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const bar = mobileCartRef.current;
+    const site = bar?.closest<HTMLElement>(".site");
+    if (!bar || !site) return;
+    const observer = new ResizeObserver(() => {
+      site.style.setProperty("--mobile-cart-height", `${bar.getBoundingClientRect().height}px`);
+    });
+    observer.observe(bar);
+    const query = matchMedia("(min-width: 850px)");
+    const closeOnDesktop = () => {
+      if (query.matches) setCartOpen(false);
+    };
+    query.addEventListener("change", closeOnDesktop);
+    return () => {
+      observer.disconnect();
+      site.style.removeProperty("--mobile-cart-height");
+      query.removeEventListener("change", closeOnDesktop);
+    };
+  }, [me.user?.role]);
   const { data, error, loading } = useData<{ products: Product[]; categories: string[] }>("/api/products"),
     cart = useData<CartItem[]>(me.user?.role === "buyer" ? "/api/cart" : null);
   const products = data?.products.filter((p) => (!category || p.category === category) && (!q || `${p.name} ${p.description}`.toLowerCase().includes(q.toLowerCase()))) || [];
@@ -127,7 +147,7 @@ export function Catalog() {
         )}
       </div>
       {me.user?.role !== "seller" && (
-        <button className="mobile-cart" onClick={() => setCartOpen(true)}>
+        <button ref={mobileCartRef} className="mobile-cart" onClick={() => setCartOpen(true)}>
           <span>
             <Icon name="bag" />
             Keranjang ({count})

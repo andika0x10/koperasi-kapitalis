@@ -86,7 +86,7 @@ export function SalesReport() {
             ].map(([label, value]) => (
               <div key={label}>
                 <dt>{label}</dt>
-                <dd>{value}</dd>
+                <dd className={String(value).length > 16 ? "long-amount" : undefined}>{value}</dd>
               </div>
             ))}
           </dl>

@@ -1,5 +1,6 @@
 "use client";
 import React, { useEffect, useState, useCallback } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import type { User } from "../lib/types";
@@ -16,6 +17,7 @@ export default function Portal() {
     [ready, setReady] = useState(false),
     [bootError, setBootError] = useState(""),
     [notice, setNotice] = useState(""),
+    [noticeTarget, setNoticeTarget] = useState<HTMLDialogElement | null>(null),
     [version, setVersion] = useState(0);
   const path = usePathname(),
     router = useRouter();
@@ -34,6 +36,19 @@ export default function Portal() {
       const timer = setTimeout(() => setNotice(""), 6500);
       return () => clearTimeout(timer);
     }
+  }, [notice]);
+  useEffect(() => {
+    if (!notice) {
+      setNoticeTarget(null);
+      return;
+    }
+    // Native dialogs occupy the top layer; keep notifications inside the active
+    // dialog so errors stay visible and their close button remains interactive.
+    const sync = () => setNoticeTarget([...document.querySelectorAll<HTMLDialogElement>("dialog[open]")].at(-1) || null);
+    sync();
+    const observer = new MutationObserver(sync);
+    observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["open"] });
+    return () => observer.disconnect();
   }, [notice]);
   const api = useCallback(
     async <T,>(url: string, method = "GET", data?: unknown): Promise<T> => {
@@ -73,6 +88,14 @@ export default function Portal() {
       setNotice((e as Error).message);
     }
   }
+  const notification = notice ? (
+    <div className="toast" role="status">
+      <span>{notice}</span>
+      <button aria-label="Tutup pemberitahuan" onClick={() => setNotice("")}>
+        <Icon name="close" size={17} />
+      </button>
+    </div>
+  ) : null;
   return (
     <Context.Provider value={{ me, api, refresh, notify: setNotice, version, changed }}>
       <div className="site">
@@ -88,14 +111,7 @@ export default function Portal() {
           <span>Kebutuhan sehari-hari, dalam satu tempat.</span>
           <span>Harga dalam Rupiah</span>
         </footer>
-        {notice && (
-          <div className="toast" role="status">
-            {notice}
-            <button aria-label="Tutup pemberitahuan" onClick={() => setNotice("")}>
-              <Icon name="close" size={17} />
-            </button>
-          </div>
-        )}
+        {noticeTarget ? createPortal(notification, noticeTarget) : notification}
       </div>
     </Context.Provider>
   );

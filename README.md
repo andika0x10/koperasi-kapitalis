@@ -116,7 +116,16 @@ Tes menjalankan Workers + D1 + Durable Objects di Miniflare: role/CSRF, persaing
 
 Verifikasi perubahan UI dan akun: typecheck, 23 tes integrasi, dan build berhasil. Tes tambahan mencakup pengiriman dengan nama kurir saja, retry, penghapusan kolom resi, penyimpanan parsial/bersamaan, pembatasan akses laporan, batas tanggal WIB, snapshot harga, paginasi, dan pencegahan penghitungan ganda.
 
-Pemeriksaan visual belum terverifikasi: tidak ada koneksi browser yang tersedia di sesi implementasi. Sebelum peluncuran, periksa lebar 320, 375, 390, 768, 1024, dan 1440 px untuk overflow, navbar/menu akun, fokus/Escape/klik luar dialog, keranjang, checkout, pengaturan belum disimpan, dan laporan. Tidak ada screenshot yang sudah diverifikasi pada sesi ini.
+Pengujian responsivitas memakai Playwright + Chromium:
+
+```powershell
+npx playwright install chromium
+npm run test:ui
+```
+
+Runner membangun aplikasi dan menjalankan preview lokal di port 4180. Semua endpoint API diintersep dengan data pengujian; tes tidak mengubah akun, stok, atau pesanan sungguhan. Cakupan meliputi halaman publik, buyer, dan seller pada 19 lebar dari 320 sampai 1440 px, termasuk kedua sisi breakpoint 620, 700, 850, dan 1150 px. Nama panjang, nominal besar, daftar 30 baris, seluruh status pesanan, serta kondisi kosong/loading/error ikut diperiksa.
+
+Tes interaksi memeriksa notifikasi di atas tombol keranjang, error di dalam dialog, perubahan jumlah barang, checkout, dialog produk, pembuatan akun sementara, fokus/Escape, reduced motion, dan viewport pendek sebagai simulasi ruang saat keyboard terbuka. Screenshot tersimpan di `.test-artifacts/ui/`, bersama trace jika tes gagal. Screenshot katalog, formulir, checkout, pengaturan, dan halaman seller perlu ditinjau saat mengubah layout. Keyboard, notch/safe area, dan perilaku browser pada perangkat iOS/Android fisik tetap memerlukan pemeriksaan perangkat langsung; pengujian otomatis ini memakai viewport Chromium desktop.
 
 `npm audit` masih melaporkan advisory moderate pada dependency transitif pembuat gambar OpenGraph bawaan Vinext, yang tidak dipakai aplikasi ini. Hindari `npm audit fix --force` yang menawarkan downgrade major framework. Vite sudah diperbarui ke patch 8.3.6.
 

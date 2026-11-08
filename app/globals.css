@@ -234,6 +234,7 @@ nav {
   color: var(--muted);
 }
 .text-button {
+  min-width: 44px;
   text-decoration: underline;
   text-underline-offset: 4px;
   padding: 0;
@@ -350,6 +351,9 @@ nav {
 }
 .search button {
   display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
   padding: 4px;
 }
 .catalog-tools select {
@@ -646,7 +650,7 @@ nav {
 }
 .toast {
   position: fixed;
-  bottom: 24px;
+  bottom: calc(24px + env(safe-area-inset-bottom, 0px));
   left: 50%;
   transform: translateX(-50%);
   background: var(--ink);
@@ -662,8 +666,16 @@ nav {
   align-items: center;
   box-shadow: 0 6px 24px #0002;
 }
+.toast > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 .toast button {
   display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  min-width: 44px;
   color: #fff;
   padding: 2px;
 }
@@ -728,7 +740,9 @@ nav {
   overflow-wrap: anywhere;
 }
 .back-link {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
   font-size: 12px;
   color: var(--muted);
   margin-bottom: 22px;
@@ -871,10 +885,16 @@ nav {
 }
 .receipt-lines > div {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: 18px;
   font-size: 13px;
   padding: 6px 0;
+}
+.receipt-lines > div > :last-child {
+  flex-shrink: 0;
+  max-width: 100%;
+  margin-left: auto;
 }
 .receipt-lines > .receipt-total {
   font-size: 15px;
@@ -910,6 +930,7 @@ nav {
   margin-top: 3px;
 }
 .table-wrap {
+  position: relative;
   border: 1px solid var(--line);
   border-radius: 8px;
   overflow: auto;
@@ -943,6 +964,7 @@ tbody tr:hover {
 }
 .order-link {
   font-size: 13px;
+  white-space: nowrap;
   font-weight: 650;
   text-decoration: none;
 }
@@ -951,6 +973,9 @@ tbody tr:hover {
 }
 .detail-link {
   display: flex;
+  min-width: 44px;
+  min-height: 44px;
+  white-space: nowrap;
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
@@ -998,6 +1023,7 @@ tbody tr:hover {
 }
 .pagination {
   display: flex;
+  flex-wrap: wrap;
   gap: 18px;
   align-items: center;
   justify-content: flex-end;
@@ -1102,7 +1128,7 @@ tbody tr:hover {
 }
 .payment-details > div {
   display: grid;
-  grid-template-columns: 150px 1fr;
+  grid-template-columns: 150px minmax(0, 1fr);
   gap: 12px;
   margin-bottom: 13px;
 }
@@ -1248,20 +1274,6 @@ tbody tr:hover {
 }
 .table-product > span {
   color: #999;
-}
-.modal {
-  padding: 29px;
-  width: min(600px, calc(100% - 24px));
-  max-height: 90vh;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  margin: auto;
-  box-shadow: 0 20px 80px #0002;
-  color: var(--ink);
-  background: #fff;
-}
-.modal::backdrop {
-  background: #0007;
 }
 .modal-header {
   display: flex;
@@ -1450,9 +1462,9 @@ tbody tr:hover {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    bottom: 16px;
-    left: 20px;
-    right: 20px;
+    bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    left: max(16px, env(safe-area-inset-left, 0px));
+    right: max(16px, env(safe-area-inset-right, 0px));
     background: var(--orange);
     border: 1px solid #e75e00;
     box-shadow: 0 4px 20px #0002;
@@ -1460,11 +1472,24 @@ tbody tr:hover {
     z-index: 90;
     border-radius: 9px;
     font-size: 13px;
+    gap: 12px;
+    min-height: 64px;
   }
   .mobile-cart > span {
     display: flex;
     align-items: center;
     gap: 9px;
+  }
+  .mobile-cart > span,
+  .mobile-cart > strong {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .mobile-cart > strong {
+    text-align: right;
+  }
+  .mobile-cart svg {
+    flex-shrink: 0;
   }
   .cart-backdrop {
     display: block;
@@ -1501,7 +1526,19 @@ tbody tr:hover {
     padding: 23px;
   }
   .toast {
-    bottom: 90px;
+    left: max(16px, env(safe-area-inset-left, 0px));
+    right: max(16px, env(safe-area-inset-right, 0px));
+    width: auto;
+    max-width: 560px;
+    margin-inline: auto;
+    transform: none;
+  }
+  .site:has(.mobile-cart):not(:has(dialog[open])) .toast {
+    bottom: calc(28px + env(safe-area-inset-bottom, 0px) + var(--mobile-cart-height, 64px));
+  }
+  .site:has(.mobile-cart) .main,
+  .site:has(.mobile-cart) .footer {
+    padding-bottom: calc(40px + env(safe-area-inset-bottom, 0px) + var(--mobile-cart-height, 64px));
   }
   .footer {
     padding-bottom: 96px;
@@ -1857,13 +1894,6 @@ tbody tr:hover {
     padding: 12px;
     font-size: 10px;
   }
-  .modal {
-    padding: 23px 19px;
-    max-height: 92dvh;
-  }
-  .modal h2 {
-    font-size: 20px;
-  }
   .two-fields {
     gap: 0;
   }
@@ -1944,6 +1974,10 @@ tbody tr:hover {
   font-size: 14px;
   max-width: 190px;
 }
+.account-trigger svg,
+.header-cart svg {
+  flex-shrink: 0;
+}
 .account-trigger span {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1987,12 +2021,16 @@ tbody tr:hover {
   margin: auto;
   background: white;
   color: var(--ink);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .overlay::backdrop {
   background: #0007;
 }
 .overlay-content {
   padding: 24px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .overlay .modal-header {
   gap: 16px;
@@ -2000,6 +2038,7 @@ tbody tr:hover {
 .icon-button {
   min-width: 44px;
   min-height: 44px;
+  flex-shrink: 0;
 }
 .cart-panel .cart-top {
   margin-bottom: 20px;
@@ -2130,6 +2169,7 @@ tbody tr:hover {
 }
 .report-summary > div {
   padding: 24px 16px;
+  container-type: inline-size;
 }
 .report-summary dt {
   font-size: 14px;
@@ -2142,9 +2182,12 @@ tbody tr:hover {
   overflow-wrap: anywhere;
   font-variant-numeric: tabular-nums;
 }
+.report-summary dd.long-amount {
+  font-size: clamp(16px, 7cqi, 28px);
+}
 .report-sections {
   display: grid;
-  grid-template-columns: 1.2fr 1fr;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
   gap: 40px;
 }
 .daily-trend {
@@ -2181,6 +2224,49 @@ tbody tr:hover {
   min-width: 0;
   overflow-wrap: anywhere;
 }
+.catalog-layout > *,
+.auth-layout > *,
+.order-layout > *,
+.report-sections > *,
+.two-fields > *,
+.alert > div,
+.page-heading > div,
+.payment-choice > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.product-meta > span,
+.timeline,
+.receipt-lines > div,
+.credential,
+.daily-row > strong,
+.table-wrap td {
+  overflow-wrap: anywhere;
+}
+.table-wrap {
+  min-width: 0;
+  max-width: 100%;
+}
+.orders-table td[data-label="Total"],
+.products-table td[data-label="Harga"] {
+  white-space: nowrap;
+}
+.modal-header > h2 {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.product-overlay {
+  width: min(600px, calc(100% - 24px));
+}
+.product-overlay .overlay-content {
+  padding: 29px;
+}
+.receipt-item {
+  flex-wrap: wrap;
+}
+.receipt-item > strong {
+  max-width: 100%;
+}
 button,
 .button,
 .text-button,
@@ -2209,6 +2295,11 @@ textarea,
 select,
 .search input {
   font-size: 16px;
+}
+@media (max-width: 1150px) {
+  .report-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 @media (max-width: 1050px) and (min-width: 850px) {
   .header-inner {
@@ -2306,9 +2397,6 @@ select,
     width: 100%;
   }
   .product-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  .report-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .report-sections {
@@ -2429,6 +2517,12 @@ select,
   .report-summary > div {
     padding: 18px 8px;
   }
+  .report-summary {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+  }
+  .product-overlay .overlay-content {
+    padding: 23px 19px;
+  }
   .report-summary dd {
     font-size: 20px;
   }
@@ -2477,6 +2571,13 @@ select,
     padding: 4px 0;
     overflow-wrap: anywhere;
   }
+  .users-table td::before {
+    content: attr(data-label);
+    display: block;
+    color: var(--muted);
+    font-size: 12px;
+    margin-bottom: 3px;
+  }
   .button-row .button,
   .decision-panel .button,
   .page-heading > .button,
@@ -2491,12 +2592,6 @@ select,
   .payment-details > div {
     grid-template-columns: minmax(0, 1fr);
     gap: 4px;
-  }
-  .toast {
-    left: 16px;
-    right: 16px;
-    max-width: none;
-    width: auto;
   }
 }
 
@@ -2662,8 +2757,7 @@ select,
     border: 0;
     overflow-wrap: anywhere;
   }
-  .audit-table td::before,
-  .users-table td::before {
+  .audit-table td::before {
     content: attr(data-label);
     display: block;
     color: var(--muted);
