@@ -3,4 +3,4 @@ export interface Env {
   COMMERCE: DurableObjectNamespace;
   LIMITER: DurableObjectNamespace;
 }
-export type Auth = { id: string; username: string; role: "seller" | "buyer"; must_change_password: number; session_id: string; csrf: string };
+export type Auth = { id: string; username: string; role: import("./types").Role; status: import("./types").AccountStatus; session_id: string; csrf: string };

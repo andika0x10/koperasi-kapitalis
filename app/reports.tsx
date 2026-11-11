@@ -1,7 +1,7 @@
 "use client";
 import React, { useState } from "react";
 import Link from "next/link";
-import { money, date } from "../lib/types";
+import { money, date, roleLabel, statusLabel } from "../lib/types";
 import type { SalesReportData } from "../lib/types";
 import { useData, ErrorBox, Loading, Empty, Pagination, StatusBadge, Field } from "./ui";
 function todayWib() {
@@ -20,7 +20,7 @@ export function SalesReport() {
     <>
       <div className="page-heading">
         <div>
-          <h1>Laporan penjualan</h1>
+          <h1>Statistik toko</h1>
           <p>Pembayaran terverifikasi berdasarkan tanggal persetujuan dalam WIB.</p>
         </div>
       </div>
@@ -77,6 +77,69 @@ export function SalesReport() {
         <Loading />
       ) : (
         <>
+          <section className="operations-section">
+            <div className="section-heading">
+              <h2>Operasional saat ini</h2>
+              <span>Tidak mengikuti filter tanggal</span>
+            </div>
+            <div className="operations-grid">
+              <div>
+                <h3>Pesanan</h3>
+                <dl className="operational-counts">
+                  {Object.entries(statusLabel).map(([status, label]) => (
+                    <div key={status}>
+                      <dt>{label}</dt>
+                      <dd>{data.operations.orders.find((o) => o.status === status)?.count || 0}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </div>
+              <div>
+                <h3>Persediaan</h3>
+                <dl className="operational-counts">
+                  <div>
+                    <dt>Barang habis</dt>
+                    <dd>{data.operations.out_of_stock.length}</dd>
+                  </div>
+                  <div>
+                    <dt>Stok menipis (1–5)</dt>
+                    <dd>{data.operations.low_stock.length}</dd>
+                  </div>
+                </dl>
+                <details>
+                  <summary>Lihat barang yang perlu diisi</summary>
+                  <ul>
+                    {[...data.operations.out_of_stock, ...data.operations.low_stock].map((p) => (
+                      <li key={p.id}>
+                        <Link href="/kelola/produk">{p.name}</Link>
+                        <small>
+                          {p.stock} {p.unit}
+                        </small>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              </div>
+              <div>
+                <h3>Akun</h3>
+                <dl className="operational-counts">
+                  {Object.entries(roleLabel).map(([role, label]) => (
+                    <div key={role}>
+                      <dt>{label}</dt>
+                      <dd>{data.operations.accounts.filter((a) => a.role === role).reduce((n, a) => n + a.count, 0)}</dd>
+                    </div>
+                  ))}
+                </dl>
+                <p className="fine">Termasuk akun menunggu aktivasi atau password baru.</p>
+              </div>
+            </div>
+          </section>
+          <div className="section-heading sales-heading">
+            <h2>Penjualan</h2>
+            <span>
+              {from} sampai {to}, WIB
+            </span>
+          </div>
           <dl className="report-summary">
             {[
               ["Pembayaran terverifikasi", money(data.summary.total)],
@@ -145,7 +208,7 @@ export function SalesReport() {
                       {data.transactions.map((o) => (
                         <tr key={o.id}>
                           <td>
-                            <Link className="order-link" href={"/seller/pesanan/" + o.id}>
+                            <Link className="order-link" href={"/kelola/pesanan/" + o.id}>
                               {o.id.slice(0, 8)}
                             </Link>
                             <small>{o.recipient}</small>

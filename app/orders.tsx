@@ -1,10 +1,11 @@
 "use client";
+import { isOperator } from "../lib/types";
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { money, date, statusLabel } from "../lib/types";
 import type { Order, Settings, Status } from "../lib/types";
 import { useApp, useData, Icon, ErrorBox, Loading, Empty, Field, ActionForm, image, StatusBadge, Pagination, CopyButton } from "./ui";
-export function Orders({ seller = false }: { seller?: boolean }) {
+export function Orders({ operator = false }: { operator?: boolean }) {
   const [status, setStatus] = useState(""),
     [page, setPage] = useState(0),
     { data, error, loading } = useData<Order[]>(`/api/orders?status=${status}&page=${page}`);
@@ -12,8 +13,8 @@ export function Orders({ seller = false }: { seller?: boolean }) {
     <>
       <div className="page-heading">
         <div>
-          <h1>{seller ? "Pesanan masuk" : "Pesanan saya"}</h1>
-          <p>{seller ? "Periksa bukti pembayaran, lalu lanjutkan pengiriman." : "Pantau pembayaran dan pengiriman barang Anda."}</p>
+          <h1>{operator ? "Pesanan masuk" : "Pesanan saya"}</h1>
+          <p>{operator ? "Periksa bukti pembayaran, lalu lanjutkan pengiriman." : "Pantau pembayaran dan pengiriman barang Anda."}</p>
         </div>
         <select
           aria-label="Filter status pesanan"
@@ -36,8 +37,8 @@ export function Orders({ seller = false }: { seller?: boolean }) {
         <Loading />
       ) : !data?.length ? (
         <Empty title={status ? "Tidak ada pesanan dengan status ini" : "Belum ada pesanan"}>
-          <p>{seller ? "Pesanan buyer akan muncul di sini." : "Mulai dengan memilih kebutuhan Anda dari katalog."}</p>
-          {!seller && (
+          <p>{operator ? "Pesanan pelanggan akan muncul di sini." : "Mulai dengan memilih kebutuhan Anda dari katalog."}</p>
+          {!operator && (
             <Link href="/" className="button primary">
               Lihat produk
             </Link>
@@ -49,7 +50,7 @@ export function Orders({ seller = false }: { seller?: boolean }) {
             <thead>
               <tr>
                 <th>Pesanan</th>
-                {seller && <th>Buyer</th>}
+                {operator && <th>Pelanggan</th>}
                 <th>Waktu pemesanan</th>
                 <th>Total</th>
                 <th>Status</th>
@@ -62,15 +63,15 @@ export function Orders({ seller = false }: { seller?: boolean }) {
               {data.map((o) => (
                 <tr key={o.id}>
                   <td>
-                    <Link className="order-link" href={(seller ? "/seller" : "") + "/pesanan/" + o.id}>
+                    <Link className="order-link" href={(operator ? "/kelola" : "") + "/pesanan/" + o.id}>
                       #{o.id.slice(0, 8).toUpperCase()}
                     </Link>
                     <small className="mobile-only">{date(o.created_at)}</small>
                   </td>
-                  {seller && (
-                    <td data-label="Buyer">
+                  {operator && (
+                    <td data-label="Pelanggan">
                       {o.username}
-                      {!!o.user_deleted_at && <small>Akun terhapus</small>}
+                      {!!!o.user_id && <small>Akun terhapus</small>}
                     </td>
                   )}
                   <td className="desktop-date">{date(o.created_at)}</td>
@@ -81,7 +82,7 @@ export function Orders({ seller = false }: { seller?: boolean }) {
                     <StatusBadge status={o.status} />
                   </td>
                   <td>
-                    <Link className="detail-link" aria-label={"Lihat pesanan " + o.id.slice(0, 8)} href={(seller ? "/seller" : "") + "/pesanan/" + o.id}>
+                    <Link className="detail-link" aria-label={"Lihat pesanan " + o.id.slice(0, 8)} href={(operator ? "/kelola" : "") + "/pesanan/" + o.id}>
                       Lihat <Icon name="arrow" size={16} />
                     </Link>
                   </td>
@@ -104,7 +105,7 @@ export function OrderDetail({ id }: { id: string }) {
     [uploadError, setUploadError] = useState(""),
     [now, setNow] = useState(Date.now()),
     [decision, setDecision] = useState<"approved" | "rejected" | null>(null);
-  const seller = me.user?.role === "seller";
+  const operator = isOperator(me.user?.role);
   useEffect(() => {
     const tick = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(tick);
@@ -132,7 +133,7 @@ export function OrderDetail({ id }: { id: string }) {
     remaining = Math.max(0, Math.ceil((o.expires_at - now) / 1000));
   return (
     <>
-      <Link className="back-link" href={seller ? "/seller" : "/pesanan"}>
+      <Link className="back-link" href={operator ? "/kelola/pesanan" : "/pesanan"}>
         Kembali ke pesanan
       </Link>
       <div className="page-heading">
@@ -140,12 +141,12 @@ export function OrderDetail({ id }: { id: string }) {
           <h1>Pesanan #{o.id.slice(0, 8).toUpperCase()}</h1>
           <p>
             {date(o.created_at)}
-            {seller ? ` · ${o.username}` : ""}
+            {operator ? ` · ${o.username}` : ""}
           </p>
         </div>
         <StatusBadge status={o.status} />
       </div>
-      {seller && ["pending", "review", "approved", "shipped"].includes(o.status) && (
+      {operator && ["pending", "review", "approved", "shipped"].includes(o.status) && (
         <div className="next-action">
           <div>
             <strong>
@@ -207,7 +208,7 @@ export function OrderDetail({ id }: { id: string }) {
             <div className="alert">
               <div>
                 <strong>Bukti pembayaran sudah diterima.</strong>
-                <p>{seller ? "Periksa bukti dan total sebelum mengambil keputusan final." : "Menunggu seller memeriksa pembayaran Anda. Bukti dan pesanan tidak dapat diubah."}</p>
+                <p>{operator ? "Periksa bukti dan total sebelum mengambil keputusan final." : "Menunggu staf memeriksa pembayaran Anda. Bukti dan pesanan tidak dapat diubah."}</p>
               </div>
             </div>
           )}
@@ -284,11 +285,11 @@ export function OrderDetail({ id }: { id: string }) {
                 <div className="proof">
                   <h3>Bukti pembayaran</h3>
                   <a href={image(o.proof_id)} target="_blank" rel="noreferrer">
-                    <img src={image(o.proof_id)} alt="Bukti pembayaran yang diunggah buyer" />
+                    <img src={image(o.proof_id)} alt="Bukti pembayaran yang diunggah pelanggan" />
                   </a>
                   <small>Klik gambar untuk melihat ukuran penuh.</small>
                 </div>
-              ) : !seller && o.status === "pending" && remaining > 0 ? (
+              ) : !operator && o.status === "pending" && remaining > 0 ? (
                 <div className="upload-section">
                   <h3>Unggah bukti pembayaran</h3>
                   <p className="muted">JPEG, PNG, atau WebP. Maksimal 1,5 MB. Hanya sekali unggah.</p>
@@ -322,7 +323,7 @@ export function OrderDetail({ id }: { id: string }) {
                         await api("/api/orders/" + o.id + "/proof", "POST", file);
                         setFile(null);
                         changed();
-                        notify("Bukti diterima. Menunggu pemeriksaan seller.");
+                        notify("Bukti diterima. Menunggu pemeriksaan staf.");
                       } catch (e) {
                         setUploadError((e as Error).message);
                       } finally {
@@ -336,7 +337,7 @@ export function OrderDetail({ id }: { id: string }) {
               ) : null}
             </section>
           )}
-          {seller && o.status === "review" && (
+          {operator && o.status === "review" && (
             <section className="decision-panel" id="order-action">
               <h2>Keputusan pembayaran</h2>
               <p>Periksa mutasi rekening Anda sebelum mengambil keputusan final.</p>
@@ -367,7 +368,7 @@ export function OrderDetail({ id }: { id: string }) {
               )}
             </section>
           )}
-          {seller && o.status === "approved" && (
+          {operator && o.status === "approved" && (
             <section className="detail-section" id="order-action">
               <h2>Siap dikirim</h2>
               <ActionForm
@@ -399,7 +400,7 @@ export function OrderDetail({ id }: { id: string }) {
               ) : (
                 <p>Pesanan sudah dikirim.</p>
               )}
-              {seller && o.status === "shipped" && (
+              {operator && o.status === "shipped" && (
                 <ActionForm
                   label="Tandai selesai"
                   onSubmit={async () => {
@@ -431,7 +432,7 @@ export function OrderDetail({ id }: { id: string }) {
             ))}
           </ol>
           <p className="fine">Isi pesanan dan bukti pembayaran terkunci. Keputusan pembayaran bersifat final.</p>
-          {!seller && ["expired", "rejected", "completed"].includes(o.status) && (
+          {!operator && ["expired", "rejected", "completed"].includes(o.status) && (
             <Link className="button secondary full" href="/">
               Kembali ke katalog
             </Link>

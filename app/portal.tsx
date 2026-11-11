@@ -4,11 +4,13 @@ import { createPortal } from "react-dom";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import type { User } from "../lib/types";
+import { isOperator } from "../lib/types";
 import { Context, Icon, Loading, ErrorBox, Empty } from "./ui";
 import { Catalog, Checkout, CartPage } from "./shop";
 import { Orders, OrderDetail } from "./orders";
-import { AuthPage, AccountSettings } from "./account";
-import { ManageProducts, Users } from "./seller";
+import { AuthPage, AccountSettings, SetPassword } from "./account";
+import { ManageProducts } from "./management";
+import { Users } from "./users";
 import { Navigation } from "./navigation";
 import { AuditLogs } from "./audit-logs";
 import { SalesReport } from "./reports";
@@ -68,7 +70,10 @@ export default function Portal() {
           setMe({ user: null, csrf: null });
           router.push("/masuk");
         }
-        throw Object.assign(new Error((payload as { error?: string }).error || "Permintaan gagal."), { status: res.status });
+        throw Object.assign(new Error((payload as { error?: string }).error || "Permintaan gagal."), {
+          status: res.status,
+          orders: (payload as { orders?: { id: string }[] }).orders,
+        });
       }
       return payload as T;
     },
@@ -76,7 +81,18 @@ export default function Portal() {
   );
   const changed = useCallback(() => setVersion((v) => v + 1), []);
   useEffect(() => {
-    if (ready && me.user?.must_change_password && path !== "/pengaturan") router.replace("/pengaturan");
+    if (path.startsWith("/seller")) {
+      const mapped =
+        path === "/seller"
+          ? "/kelola/pesanan"
+          : path
+              .replace("/seller/users", "/owner/pengguna")
+              .replace("/seller/log-aktivitas", "/owner/log-aktivitas")
+              .replace("/seller/laporan", "/owner/statistik")
+              .replace("/seller/", "/kelola/");
+      router.replace(mapped);
+    }
+    if (path === "/owner") router.replace("/owner/statistik");
   }, [ready, me.user, path, router]);
   async function logout() {
     try {
@@ -98,7 +114,7 @@ export default function Portal() {
   ) : null;
   return (
     <Context.Provider value={{ me, api, refresh, notify: setNotice, version, changed }}>
-      <div className="site">
+      <div className={"site" + (isOperator(me.user?.role) ? " management-site" : " buyer-site")}>
         <a className="skip-link" href="#main">
           Lewati ke konten
         </a>
@@ -118,6 +134,8 @@ export default function Portal() {
 }
 function Screen({ path }: { path: string }) {
   const me = React.useContext(Context).me;
+  if (path === "/atur-password") return <SetPassword />;
+  if (path.startsWith("/seller") || path === "/owner") return <Loading />;
   if (path === "/masuk" || path === "/daftar") return <AuthPage register={path === "/daftar"} />;
   if (path === "/") return <Catalog />;
   if (!me.user)
@@ -129,22 +147,22 @@ function Screen({ path }: { path: string }) {
         </Link>
       </Empty>
     );
-  if (me.user.must_change_password || path === "/pengaturan") return <AccountSettings />;
-  if (path.startsWith("/seller") && me.user.role !== "seller")
+  if (path === "/pengaturan") return <AccountSettings />;
+  if ((path.startsWith("/owner") && me.user.role !== "owner") || (path.startsWith("/kelola") && !isOperator(me.user.role)))
     return (
       <Empty title="Halaman tidak tersedia">
         <Link href="/">Kembali ke produk</Link>
       </Empty>
     );
-  if (path === "/seller") return <Orders seller />;
-  if (path === "/seller/produk") return <ManageProducts />;
-  if (path === "/seller/laporan") return <SalesReport />;
+  if (path === "/kelola/pesanan" || path === "/kelola") return <Orders operator />;
+  if (path === "/kelola/produk") return <ManageProducts />;
+  if (path === "/owner/statistik") return <SalesReport />;
   if (path === "/keranjang" && me.user.role === "buyer") return <CartPage />;
-  if (path === "/seller/log-aktivitas") return <AuditLogs />;
-  if (path === "/seller/users") return <Users />;
+  if (path === "/owner/log-aktivitas") return <AuditLogs />;
+  if (path === "/owner/pengguna") return <Users />;
   if (path === "/checkout" && me.user.role === "buyer") return <Checkout />;
-  if (path === "/pesanan") return <Orders />;
-  const match = path.match(/^\/(?:seller\/)?pesanan\/([^/]+)$/);
+  if (path === "/pesanan" && me.user.role === "buyer") return <Orders />;
+  const match = path.match(/^\/(?:kelola\/)?pesanan\/([^/]+)$/);
   if (match) return <OrderDetail key={match[1]} id={match[1]} />;
   return (
     <Empty title="Halaman tidak ditemukan">

@@ -3,9 +3,10 @@ import React, { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useApp, useData, Icon, Overlay } from "./ui";
 import type { CartItem } from "../lib/types";
+import { isOperator, roleLabel } from "../lib/types";
 export function Navigation({ path, logout }: { path: string; logout: () => Promise<void> }) {
   const { me } = useApp(),
-    seller = me.user?.role === "seller";
+    operator = isOperator(me.user?.role);
   const [mobile, setMobile] = useState(false),
     [account, setAccount] = useState(false);
   const accountRef = useRef<HTMLDivElement>(null),
@@ -43,19 +44,24 @@ export function Navigation({ path, logout }: { path: string; logout: () => Promi
     query.addEventListener("change", change);
     return () => query.removeEventListener("change", change);
   }, []);
-  const links = seller
+  const links = operator
     ? [
-        ["/seller", "Pesanan"],
-        ["/seller/produk", "Produk"],
-        ["/seller/users", "Pengguna"],
-        ["/seller/log-aktivitas", "Log aktivitas"],
-        ["/seller/laporan", "Laporan"],
+        ...(me.user?.role === "owner" ? [["/owner/statistik", "Statistik"]] : []),
+        ["/kelola/pesanan", "Pesanan"],
+        ["/kelola/produk", "Produk"],
+        ...(me.user?.role === "owner"
+          ? [
+              ["/owner/pengguna", "Pengguna"],
+              ["/owner/log-aktivitas", "Log aktivitas"],
+            ]
+          : []),
+        ["/pengaturan", "Pengaturan"],
       ]
     : [["/", "Produk"], ["/keranjang", "Keranjang"], ...(me.user ? [["/pesanan", "Pesanan saya"]] : [])];
   const nav = (
     <nav className="primary-navigation" aria-label="Navigasi utama">
       {links.map(([href, label]) => {
-        const active = path === href || (href === "/seller" && path.startsWith("/seller/pesanan/")) || (href === "/pesanan" && path.startsWith("/pesanan/"));
+        const active = path === href || (href === "/kelola/pesanan" && path.startsWith("/kelola/pesanan/")) || (href === "/pesanan" && path.startsWith("/pesanan/"));
         return (
           <Link key={href} href={href} className={"nav-link" + (active ? " active" : "")} aria-current={active ? "page" : undefined} onClick={() => setMobile(false)}>
             {label}
@@ -68,7 +74,7 @@ export function Navigation({ path, logout }: { path: string; logout: () => Promi
     <>
       <div className="account-identity">
         <strong>{me.user.username}</strong>
-        <small>{seller ? "Seller" : "Buyer"}</small>
+        <small>{roleLabel[me.user.role]}</small>
       </div>
       <Link
         className="nav-link"
@@ -104,7 +110,7 @@ export function Navigation({ path, logout }: { path: string; logout: () => Promi
   return (
     <header className="header">
       <div className="header-inner">
-        <Link href={seller ? "/seller" : "/"} className="wordmark">
+        <Link href={me.user?.role === "owner" ? "/owner/statistik" : operator ? "/kelola/pesanan" : "/"} className="wordmark">
           Koperasi{" "}
           <strong>
             Kapitalis<span>.</span>
@@ -112,7 +118,7 @@ export function Navigation({ path, logout }: { path: string; logout: () => Promi
         </Link>
         <div className="desktop-navigation">{nav}</div>
         <div className="header-actions">
-          {!seller && (
+          {!operator && (
             <Link
               href="/keranjang"
               className="header-cart"
@@ -145,6 +151,22 @@ export function Navigation({ path, logout }: { path: string; logout: () => Promi
           </button>
         </div>
       </div>
+      {operator && (
+        <aside className="management-sidebar">
+          <p className="sidebar-identity">{me.user?.role === "owner" ? "Kelola toko" : "Operasional toko"}</p>
+          {nav}
+          <Link className="sidebar-catalog" href="/">
+            Lihat katalog
+          </Link>
+          <div className="sidebar-account">
+            <strong>{me.user?.username}</strong>
+            <small>{me.user ? roleLabel[me.user.role] : ""}</small>
+            <button className="text-button" onClick={() => void logout()}>
+              Keluar
+            </button>
+          </div>
+        </aside>
+      )}
       <Overlay open={mobile} onClose={() => setMobile(false)} title="Menu" className="navigation-overlay">
         <div id="mobile-menu">
           {nav}

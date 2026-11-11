@@ -6,15 +6,14 @@ import { reportRange } from "./reports";
 const allowed = new Set([
   "username",
   "role",
-  "deleted_at",
   "name",
   "description",
   "category",
   "unit",
   "price",
   "stock",
-  "photo_id",
-  "archived",
+  "photo_ids",
+  "expires_at",
   "shipping_fee",
   "bank_name",
   "bank_account",
@@ -32,7 +31,15 @@ const allowed = new Set([
   "code",
 ]);
 export function safeDetails(value: Record<string, unknown>) {
-  return Object.fromEntries(Object.entries(value).filter(([key, value]) => allowed.has(key) && (value === null || ["string", "number", "boolean"].includes(typeof value))));
+  return Object.fromEntries(
+    Object.entries(value).filter(
+      ([key, value]) =>
+        allowed.has(key) &&
+        (value === null ||
+          ["string", "number", "boolean"].includes(typeof value) ||
+          (key === "photo_ids" && Array.isArray(value) && value.length <= 5 && value.every((v) => typeof v === "string" && v.length <= 100)))
+    )
+  );
 }
 export type Actor = { id: string | null; username: string };
 export function audit(db: D1Database, actor: Actor | null, action: string, target: string | null, type: string, details: unknown = null, outcome = "success") {

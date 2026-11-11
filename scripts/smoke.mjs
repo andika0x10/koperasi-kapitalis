@@ -7,7 +7,18 @@ const args = process.argv.slice(2),
   };
 const base = value("--base") || "http://127.0.0.1:5173",
   credentials = value("--credentials");
-for (const path of ["/", "/masuk", "/daftar", "/pengaturan", "/seller", "/seller/users", "/seller/log-aktivitas"]) {
+for (const path of [
+  "/",
+  "/masuk",
+  "/daftar",
+  "/pengaturan",
+  "/kelola/pesanan",
+  "/kelola/produk",
+  "/owner/pengguna",
+  "/owner/log-aktivitas",
+  "/owner/statistik",
+  "/atur-password",
+]) {
   const response = await fetch(base + path);
   const html = await response.text();
   assert.equal(response.status, 200, path);
@@ -38,7 +49,7 @@ console.log("OK store settings API");
 if (credentials) {
   const content = readFileSync(credentials, "utf8"),
     username = content.match(/Username: (.+)/)[1].trim(),
-    password = content.match(/Password sementara: (.+)/)[1].trim();
+    password = content.match(/Password: (.+)/)[1].trim();
   const response = await fetch(base + "/api/login", {
     method: "POST",
     headers: { "content-type": "application/json", origin: base },
@@ -47,19 +58,18 @@ if (credentials) {
   assert.equal(response.status, 200, `Login HTTP ${response.status}`);
   const cookie = response.headers.get("set-cookie")?.split(";")[0];
   assert.ok(cookie);
-  console.log("OK seller login");
+  console.log("OK account login");
   const meResponse = await fetch(base + "/api/me", { headers: { cookie } }),
     me = await meResponse.json();
-  assert.equal(me.user.role, "seller");
-  assert.equal(me.user.must_change_password, 1);
-  console.log("OK initial password change enforced");
+  assert.equal(me.user.status, "active");
+  assert.ok(["owner", "staff"].includes(me.user.role));
   const sessions = await fetch(base + "/api/sessions", { headers: { cookie } });
   assert.equal(sessions.status, 200);
   assert.ok((await sessions.json()).some((s) => s.current));
   console.log("OK sessions API");
   const protectedResponse = await fetch(base + "/api/products?all=1", { headers: { cookie } });
-  assert.equal(protectedResponse.status, 403);
-  console.log("OK temporary password access restriction");
+  assert.equal(protectedResponse.status, 200);
+  console.log("OK operational access");
   const logout = await fetch(base + "/api/logout", { method: "POST", headers: { cookie, origin: base, "x-csrf-token": me.csrf } });
   assert.equal(logout.status, 200);
   console.log("OK logout");

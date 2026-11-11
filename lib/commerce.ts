@@ -5,6 +5,8 @@ import { authenticate, csrf, role, unlocked, createSession, sessionCookie, limit
 import { audit, safeDetails, username } from "./audit";
 import { body, json, failure } from "./http";
 import { HttpError, text, integer, imageFile, digest, random, validPassword, hashPassword, verifyPassword } from "./security";
+import { newPasswordLink } from "./password-links";
+import { productPhotos, unusedProductPhotos } from "./products";
 
 export class RateLimiter extends DurableObject<Env> {
   async fetch(request: Request) {
@@ -63,6 +65,8 @@ export class Commerce extends DurableObject<Env> {
     await this.serialized(async () => {
       await this.arm();
       await this.expire();
+      await unusedProductPhotos(this.env.DB).run();
+      await this.env.DB.prepare("DELETE FROM password_links WHERE expires_at<=?").bind(Date.now()).run();
       await this.env.DB.prepare("DELETE FROM audit_log WHERE created_at<?")
         .bind(Date.now() - 365 * 86400000)
         .run();
@@ -99,7 +103,7 @@ export class Commerce extends DurableObject<Env> {
   }
   private async order(id: string, auth: Auth) {
     const order = await this.env.DB.prepare("SELECT * FROM orders WHERE id=?").bind(id).first<Order>();
-    if (!order || (auth.role !== "seller" && order.user_id !== auth.id)) throw new HttpError(404, "Pesanan tidak ditemukan.");
+    if (!order || (auth.role === "buyer" && order.user_id !== auth.id)) throw new HttpError(404, "Pesanan tidak ditemukan.");
     return order;
   }
   private async attachment(request: Request, auth: Auth, kind: string) {
@@ -133,6 +137,36 @@ export class Commerce extends DurableObject<Env> {
     }
     if (request.headers.get("origin") !== new URL(request.url).origin) throw new HttpError(403, "Asal permintaan tidak valid.");
     if (!["POST", "PUT", "DELETE"].includes(method)) throw new HttpError(405, "Metode tidak didukung.");
+    if ((path === "/api/password-links/validate" || path === "/api/password-links/complete") && method === "POST") {
+      const ip = request.headers.get("cf-connecting-ip") || "local";
+      await limit(this.env, `password-link:ip:${ip}`, 30, 15 * 60000);
+      const data = await body(request);
+      if (typeof data.token !== "string" || !/^[a-f0-9]{64}$/.test(data.token)) throw new HttpError(400, "Link tidak valid. Minta link baru kepada owner.");
+      const tokenHash = await digest(data.token);
+      await limit(this.env, `password-link:token:${tokenHash}`, 10, 15 * 60000);
+      const link = await db
+        .prepare("SELECT u.id,u.username,u.status,p.expires_at FROM password_links p JOIN users u ON u.id=p.user_id WHERE p.token_hash=? AND p.expires_at>?")
+        .bind(tokenHash, Date.now())
+        .first<{ id: string; username: string; status: string; expires_at: number }>();
+      if (!link) throw new HttpError(400, "Link sudah kedaluwarsa, digunakan, atau dibatalkan. Minta link baru kepada owner.");
+      if (path.endsWith("/validate")) return json({ username: link.username, expires_at: link.expires_at });
+      validPassword(data.password);
+      const hash = await hashPassword(data.password);
+      await db.batch([
+        db
+          .prepare(
+            "UPDATE users SET password_hash=?,status='active' WHERE id=? AND EXISTS(SELECT 1 FROM password_links WHERE user_id=users.id AND token_hash=? AND expires_at>CAST(unixepoch('subsec')*1000 AS INTEGER))"
+          )
+          .bind(hash, link.id, tokenHash),
+        // Abort the entire batch if CLI recovery replaced the token during hashing.
+        db.prepare("INSERT INTO password_link_guard(value) VALUES(changes())"),
+        db.prepare("DELETE FROM password_link_guard"),
+        db.prepare("DELETE FROM sessions WHERE user_id=?").bind(link.id),
+        db.prepare("DELETE FROM password_links WHERE user_id=? AND token_hash=?").bind(link.id, tokenHash),
+        audit(db, link, link.status === "pending" ? "account_activated" : "password_reset_completed", link.id, "user"),
+      ]);
+      return json({ ok: true }, 200, { "set-cookie": sessionCookie("", request, 0) });
+    }
     if ((path === "/api/login" || path === "/api/register") && method === "POST") {
       const data = await body(request),
         name = username(data.username);
@@ -142,30 +176,30 @@ export class Commerce extends DurableObject<Env> {
       await limit(this.env, `auth:ip:${ip}`, 30, 15 * 60000);
       await limit(this.env, `auth:user:${name}`, 10, 15 * 60000);
       let user = await db
-        .prepare("SELECT id,username,password_hash,deleted_at FROM users WHERE username=?")
+        .prepare("SELECT id,username,password_hash,status FROM users WHERE username=?")
         .bind(name)
-        .first<{ id: string; username: string; password_hash: string; deleted_at: number | null }>();
+        .first<{ id: string; username: string; password_hash: string | null; status: string }>();
       const statements: D1PreparedStatement[] = [];
       if (path === "/api/register") {
         if (user) throw new HttpError(409, "Username sudah digunakan.");
         await limit(this.env, `register:${ip}`, 5, 3600000);
         const id = crypto.randomUUID(),
           hash = await hashPassword(data.password);
-        user = { id, username: name, password_hash: hash, deleted_at: null };
+        user = { id, username: name, password_hash: hash, status: "active" };
         statements.push(db.prepare("INSERT INTO users(id,username,password_hash,role,created_at) VALUES(?,?,?,'buyer',?)").bind(id, name, hash, Date.now()));
         statements.push(audit(db, user, "registered", id, "user", { after: { username: name, role: "buyer" } }));
       } else {
-        const verified = user ? await verifyPassword(data.password, user.password_hash) : (await hashPassword(data.password, "0".repeat(64)), false);
-        if (!verified || !user || user.deleted_at !== null) throw new HttpError(401, "Username atau password salah.");
+        const verified = user?.password_hash ? await verifyPassword(data.password, user.password_hash) : (await hashPassword(data.password, "0".repeat(64)), false);
+        if (!verified || !user || user.status !== "active") throw new HttpError(401, "Username atau password salah. Jika akun sedang direset, gunakan link dari owner.");
       }
       statements.push(audit(db, user!, "login", user!.id, "user"));
       const token = await createSession(this.env, request, user!.id, statements);
       // CLI recovery writes directly to D1, outside the coordinator queue.
       const current = await db
-        .prepare("SELECT password_hash,username,deleted_at FROM users WHERE id=?")
+        .prepare("SELECT password_hash,username,status FROM users WHERE id=?")
         .bind(user!.id)
-        .first<{ password_hash: string; username: string; deleted_at: number | null }>();
-      if (!current || current.password_hash !== user!.password_hash || current.username !== name || current.deleted_at !== null) {
+        .first<{ password_hash: string; username: string; status: string }>();
+      if (!current || current.password_hash !== user!.password_hash || current.username !== name || current.status !== "active") {
         await db
           .prepare("DELETE FROM sessions WHERE token_hash=?")
           .bind(await digest(token))
@@ -184,7 +218,8 @@ export class Commerce extends DurableObject<Env> {
       if (!user || !(await verifyPassword(current, user.password_hash))) throw new HttpError(400, "Password saat ini salah.");
       const hash = await hashPassword(data.password);
       await db.batch([
-        db.prepare("UPDATE users SET password_hash=?,must_change_password=0 WHERE id=?").bind(hash, auth.id),
+        db.prepare("UPDATE users SET password_hash=? WHERE id=?").bind(hash, auth.id),
+        db.prepare("DELETE FROM password_links WHERE user_id=?").bind(auth.id),
         db.prepare("DELETE FROM sessions WHERE user_id=? AND id<>?").bind(auth.id, auth.session_id),
         this.audit(auth, "password_changed", auth.id),
       ]);
@@ -232,7 +267,7 @@ export class Commerce extends DurableObject<Env> {
           audit(db, auth, "cart_updated", id, "cart", { before: { quantity: previous?.quantity || 0 }, after: { quantity: qty } }),
         ]);
       else {
-        const product = await db.prepare("SELECT stock FROM products WHERE id=? AND archived=0").bind(id).first<{ stock: number }>();
+        const product = await db.prepare("SELECT stock FROM products WHERE id=?").bind(id).first<{ stock: number }>();
         if (!product) throw new HttpError(404, "Produk tidak tersedia.");
         if (qty > product.stock) throw new HttpError(409, "Jumlah melebihi stok tersedia.");
         const count = await db.prepare("SELECT COUNT(*) AS n FROM cart_items WHERE user_id=? AND product_id<>?").bind(auth.id, id).first<{ n: number }>();
@@ -257,13 +292,13 @@ export class Commerce extends DurableObject<Env> {
         address = text(data.address, "Alamat lengkap", 1000, 15);
       if (!/^[+\d\s()-]{8,25}$/.test(phone)) throw new HttpError(400, "Nomor HP tidak valid.");
       const config = (await db.prepare("SELECT * FROM settings WHERE id=1").first<Settings>())!;
-      if (config.shipping_fee === null) throw new HttpError(409, "Seller belum mengatur ongkir.");
+      if (config.shipping_fee === null) throw new HttpError(409, "Toko belum mengatur ongkir.");
       const bankReady = !!(config.bank_name && config.bank_account && config.bank_holder);
       if ((data.payment_method === "bank" && !bankReady) || (data.payment_method === "qris" && !config.qris_id) || !["bank", "qris"].includes(String(data.payment_method)))
         throw new HttpError(400, "Metode pembayaran belum tersedia.");
       const cart = await db.prepare("SELECT p.*,c.quantity FROM cart_items c JOIN products p ON p.id=c.product_id WHERE c.user_id=?").bind(auth.id).all<CartItem>();
       if (!cart.results.length || cart.results.length > 20) throw new HttpError(400, "Isi keranjang dengan 1–20 jenis barang.");
-      if (cart.results.some((p) => p.archived || p.stock < p.quantity)) throw new HttpError(409, "Stok berubah. Periksa keranjang sebelum checkout.");
+      if (cart.results.some((p) => p.stock < p.quantity)) throw new HttpError(409, "Stok berubah. Periksa keranjang sebelum checkout.");
       const subtotal = cart.results.reduce((s, p) => s + p.price * p.quantity, 0),
         total = subtotal + config.shipping_fee;
       if (data.expected_total !== total) throw new HttpError(409, "Harga atau ongkir berubah. Muat ulang dan periksa total sebelum checkout.");
@@ -273,9 +308,9 @@ export class Commerce extends DurableObject<Env> {
       await db.batch([
         db
           .prepare(
-            `INSERT INTO orders(id,user_id,checkout_key,status,recipient,phone,address,subtotal,shipping_fee,total,payment_method,payment_snapshot,created_at,expires_at) VALUES(?,?,?,'pending',?,?,?,?,?,?,?,?,?,?)`
+            `INSERT INTO orders(id,user_id,buyer_username,checkout_key,status,recipient,phone,address,subtotal,shipping_fee,total,payment_method,payment_snapshot,created_at,expires_at) VALUES(?,?,?,?,'pending',?,?,?,?,?,?,?,?,?,?)`
           )
-          .bind(id, auth.id, key, recipient, phone, address, subtotal, config.shipping_fee, total, data.payment_method, JSON.stringify(config), now, now + 3600000),
+          .bind(id, auth.id, auth.username, key, recipient, phone, address, subtotal, config.shipping_fee, total, data.payment_method, JSON.stringify(config), now, now + 3600000),
         ...cart.results.map((p) =>
           db
             .prepare("INSERT INTO order_items(id,order_id,product_id,name,unit,price,quantity) VALUES(?,?,?,?,?,?,?)")
@@ -315,38 +350,32 @@ export class Commerce extends DurableObject<Env> {
       ]);
       return json({ ok: true });
     }
-    role(auth, "seller");
+    role(auth, "owner", "staff");
     if (path === "/api/users" && method === "POST") {
+      role(auth, "owner");
       const data = await body(request),
         name = username(data.username);
-      if (!["buyer", "seller"].includes(String(data.role))) throw new HttpError(400, "Role tidak valid.");
-      const id = crypto.randomUUID(),
-        password = "KK-" + random().slice(0, 20),
-        hash = await hashPassword(password);
+      if (!["buyer", "staff"].includes(String(data.role))) throw new HttpError(400, "Role tidak valid.");
+      const id = crypto.randomUUID();
+      const link = await newPasswordLink(db, id, name, new URL(request.url).origin);
       await db.batch([
-        db.prepare("INSERT INTO users(id,username,password_hash,role,must_change_password,created_at) VALUES(?,?,?,?,1,?)").bind(id, name, hash, data.role, Date.now()),
+        db.prepare("INSERT INTO users(id,username,password_hash,role,status,created_at) VALUES(?,?,NULL,?,'pending',?)").bind(id, name, data.role, Date.now()),
+        ...link.statements,
         this.audit(auth, "user_created", id, { after: { username: name, role: data.role } }),
+        this.audit(auth, "password_link_issued", id, { username: name, expires_at: link.result.expires_at }),
       ]);
-      return json({ id, username: name, password }, 201);
+      return json({ id, ...link.result }, 201);
     }
     const deletion = path.match(/^\/api\/users\/([^/]+)$/);
     if (deletion && method === "DELETE") {
+      role(auth, "owner");
       if (deletion[1] === auth.id) throw new HttpError(400, "Anda tidak dapat menghapus akun sendiri.");
-      const user = await db
-        .prepare("SELECT id,username,role,deleted_at FROM users WHERE id=?")
-        .bind(deletion[1])
-        .first<{ id: string; username: string; role: string; deleted_at: number | null }>();
+      const user = await db.prepare("SELECT id,username,role FROM users WHERE id=?").bind(deletion[1]).first<{ id: string; username: string; role: string }>();
       if (!user) throw new HttpError(404, "Pengguna tidak ditemukan.");
-      if (user.deleted_at !== null) return json({ ok: true });
-      if (user.role === "seller") {
-        const count = await db.prepare("SELECT COUNT(*) n FROM users WHERE role='seller' AND deleted_at IS NULL").first<{ n: number }>();
-        if (count!.n <= 1) throw new HttpError(409, "Seller aktif terakhir tidak dapat dihapus.");
-      }
-      const now = Date.now();
+      if (user.role === "owner") throw new HttpError(409, "Owner tidak dapat dihapus.");
       await db.batch([
-        db.prepare("UPDATE users SET deleted_at=? WHERE id=?").bind(now, user.id),
-        db.prepare("DELETE FROM sessions WHERE user_id=?").bind(user.id),
-        this.audit(auth, "user_deleted", user.id, { before: { username: user.username, role: user.role }, after: { deleted_at: now } }),
+        this.audit(auth, "user_deleted", user.id, { before: { username: user.username, role: user.role }, after: null }),
+        db.prepare("DELETE FROM users WHERE id=?").bind(user.id),
       ]);
       return json({ ok: true });
     }
@@ -364,35 +393,87 @@ export class Commerce extends DurableObject<Env> {
         category = text(data.category, "Kategori", 60),
         unit = text(data.unit, "Satuan", 40),
         price = integer(data.price, "Harga", 1),
-        stock = integer(data.stock, "Stok", 0, 999999),
-        photo = data.photo_id ? text(data.photo_id, "Foto", 100) : null;
-      if (photo && !(await db.prepare("SELECT id FROM attachments WHERE id=? AND kind='product'").bind(photo).first())) throw new HttpError(400, "Foto produk tidak valid.");
+        stock = integer(data.stock, "Stok", 0, 999999);
+      if ("archived" in data || "photo_id" in data) throw new HttpError(400, "Gunakan daftar photo_ids. Pengarsipan tidak tersedia.");
+      const photos = data.photo_ids ?? [];
+      if (!Array.isArray(photos) || photos.length > 5 || photos.some((p) => typeof p !== "string" || p.length > 100) || new Set(photos).size !== photos.length)
+        throw new HttpError(400, "Gunakan maksimal 5 foto yang berbeda.");
+      for (const photo of photos) {
+        if (!(await db.prepare("SELECT id FROM attachments WHERE id=? AND kind='product'").bind(photo).first())) throw new HttpError(400, "Foto produk tidak valid.");
+      }
       const now = Date.now();
       const previous = method === "PUT" ? await db.prepare("SELECT * FROM products WHERE id=?").bind(id).first<Record<string, unknown>>() : null;
-      const after = { name, description, category, unit, price, stock, photo_id: photo, archived: data.archived === true || data.archived === 1 ? 1 : 0 };
-      if (previous && JSON.stringify(safeDetails(previous)) === JSON.stringify(safeDetails({ ...previous, ...after }))) return json({ id });
+      const before = previous ? (await productPhotos(db, [previous as { id: string }]))[0] : null;
+      const after = { name, description, category, unit, price, stock, photo_ids: photos };
+      if (before && JSON.stringify(safeDetails(before)) === JSON.stringify(safeDetails({ ...before, ...after }))) return json({ id });
       await db.batch([
         method === "POST"
           ? db
-              .prepare("INSERT INTO products(id,name,description,category,unit,price,stock,photo_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)")
-              .bind(id, name, description, category, unit, price, stock, photo, now, now)
+              .prepare("INSERT INTO products(id,name,description,category,unit,price,stock,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)")
+              .bind(id, name, description, category, unit, price, stock, now, now)
           : db
-              .prepare("UPDATE products SET name=?,description=?,category=?,unit=?,price=?,stock=?,photo_id=?,archived=?,updated_at=?,revision=revision+1 WHERE id=?")
-              .bind(name, description, category, unit, price, stock, photo, data.archived === true || data.archived === 1 ? 1 : 0, now, id),
-        this.audit(auth, method === "POST" ? "product_created" : "product_updated", id, { before: previous ? safeDetails(previous) : null, after }),
+              .prepare("UPDATE products SET name=?,description=?,category=?,unit=?,price=?,stock=?,updated_at=?,revision=revision+1 WHERE id=?")
+              .bind(name, description, category, unit, price, stock, now, id),
+        db.prepare("DELETE FROM product_photos WHERE product_id=?").bind(id),
+        ...photos.map((photo, position) => db.prepare("INSERT INTO product_photos(product_id,attachment_id,position) VALUES(?,?,?)").bind(id, photo, position)),
+        ...(before?.photo_ids || [])
+          .filter((photo) => !photos.includes(photo))
+          .map((photo) =>
+            db.prepare("DELETE FROM attachments WHERE id=? AND kind='product' AND NOT EXISTS(SELECT 1 FROM product_photos WHERE attachment_id=attachments.id)").bind(photo)
+          ),
+        this.audit(auth, method === "POST" ? "product_created" : "product_updated", id, { before: before ? safeDetails(before) : null, after }),
       ]);
       return json({ id });
+    }
+    const productDeletion = path.match(/^\/api\/products\/([^/]+)$/);
+    if (productDeletion && method === "DELETE") {
+      await this.expire();
+      const id = productDeletion[1];
+      const previous = await db.prepare("SELECT * FROM products WHERE id=?").bind(id).first<{ id: string; name: string; revision: number }>();
+      if (!previous) throw new HttpError(404, "Barang tidak ditemukan.");
+      const data = await body(request);
+      if (integer(data.revision, "Versi barang") !== previous.revision) throw new HttpError(409, "Barang berubah. Muat ulang sebelum menghapus.");
+      const blockers = await db
+        .prepare(
+          "SELECT o.id FROM orders o JOIN order_items i ON i.order_id=o.id WHERE i.product_id=? AND o.status NOT IN ('completed','rejected','expired') ORDER BY o.created_at"
+        )
+        .bind(id)
+        .all<{ id: string }>();
+      if (blockers.results.length) {
+        await audit(db, auth, "request_rejected", path, "request", { code: 409 }, "failure").run();
+        return json({ error: "Selesaikan pesanan terkait sebelum menghapus barang.", orders: blockers.results }, 409);
+      }
+      const before = (await productPhotos(db, [previous]))[0];
+      await db.batch([
+        db.prepare("DELETE FROM products WHERE id=?").bind(id),
+        ...before.photo_ids.map((photo) =>
+          db.prepare("DELETE FROM attachments WHERE id=? AND NOT EXISTS(SELECT 1 FROM product_photos WHERE attachment_id=attachments.id)").bind(photo)
+        ),
+        this.audit(auth, "product_deleted", id, { before, after: null }),
+      ]);
+      return json({ ok: true });
     }
     if (path === "/api/attachments" && method === "POST") {
       const kind = new URL(request.url).searchParams.get("kind");
       if (!["product", "qris"].includes(kind || "")) throw new HttpError(400, "Jenis gambar tidak valid.");
+      if (kind === "qris") role(auth, "owner");
       const file = await this.attachment(request, auth, kind!);
       await db.batch([file.statement, audit(db, auth, "attachment_uploaded", file.id, "attachment", { kind })]);
       return json({ id: file.id }, 201);
     }
+    const discardedPhoto = path.match(/^\/api\/attachments\/([^/]+)$/);
+    if (discardedPhoto && method === "DELETE") {
+      await db
+        .prepare("DELETE FROM attachments WHERE id=? AND kind='product' AND owner_id=? AND NOT EXISTS(SELECT 1 FROM product_photos WHERE attachment_id=attachments.id)")
+        .bind(discardedPhoto[1], auth.id)
+        .run();
+      return json({ ok: true });
+    }
     if (path === "/api/settings" && method === "PUT") {
       const current = await db.prepare("SELECT * FROM settings WHERE id=1").first<Record<string, unknown>>();
-      const data = { ...current, ...(await body(request)) },
+      const incoming = await body(request);
+      if (auth.role === "staff" && Object.keys(incoming).some((key) => key !== "shipping_fee")) throw new HttpError(403, "Staf hanya dapat mengubah ongkir.");
+      const data = { ...current, ...incoming },
         shipping = data.shipping_fee === null ? null : integer(data.shipping_fee, "Ongkir", 0, 10000000),
         bank = text(data.bank_name ?? "", "Bank", 80, 0),
         account = text(data.bank_account ?? "", "Rekening", 80, 0),
@@ -448,17 +529,15 @@ export class Commerce extends DurableObject<Env> {
     }
     const reset = path.match(/^\/api\/users\/([^/]+)\/reset$/);
     if (reset && method === "POST") {
+      role(auth, "owner");
       if (reset[1] === auth.id) throw new HttpError(400, "Ganti password sendiri melalui Pengaturan.");
-      const user = await db.prepare("SELECT id,username FROM users WHERE id=? AND deleted_at IS NULL").bind(reset[1]).first<{ id: string; username: string }>();
+      const user = await db.prepare("SELECT id,username,role FROM users WHERE id=?").bind(reset[1]).first<{ id: string; username: string; role: string }>();
       if (!user) throw new HttpError(404, "Pengguna aktif tidak ditemukan.");
-      const password = "KK-" + random().slice(0, 20),
-        hash = await hashPassword(password);
-      await db.batch([
-        db.prepare("UPDATE users SET password_hash=?,must_change_password=1 WHERE id=?").bind(hash, reset[1]),
-        db.prepare("DELETE FROM sessions WHERE user_id=?").bind(reset[1]),
-        this.audit(auth, "user_password_reset", reset[1], { username: user.username }),
-      ]);
-      return json({ password });
+      if (user.role === "owner") throw new HttpError(403, "Pemulihan owner dilakukan melalui CLI.");
+      await limit(this.env, `reset-issue:${auth.id}`, 30, 15 * 60000);
+      const link = await newPasswordLink(db, user.id, user.username, new URL(request.url).origin);
+      await db.batch([...link.statements, this.audit(auth, "password_link_issued", reset[1], { username: user.username, expires_at: link.result.expires_at })]);
+      return json(link.result);
     }
     throw new HttpError(404, "Halaman tidak ditemukan.");
   }

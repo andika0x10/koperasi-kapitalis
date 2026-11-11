@@ -1,4 +1,6 @@
 "use client";
+import { isOperator } from "../lib/types";
+import { ProductGallery } from "./photos";
 import React, { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -11,7 +13,8 @@ export function Catalog() {
   const [q, setQ] = useState(""),
     [category, setCategory] = useState(""),
     [busy, setBusy] = useState(""),
-    [cartOpen, setCartOpen] = useState(false);
+    [cartOpen, setCartOpen] = useState(false),
+    [gallery, setGallery] = useState<Product | null>(null);
   const mobileCartRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     const bar = mobileCartRef.current;
@@ -55,6 +58,7 @@ export function Catalog() {
   }
   return (
     <>
+      {gallery && <ProductGallery name={gallery.name} photos={gallery.photo_ids} onClose={() => setGallery(null)} />}
       <div className="page-heading catalog-heading">
         <div>
           <h1>Kebutuhan sehari-hari</h1>
@@ -89,8 +93,11 @@ export function Catalog() {
               {products.map((p) => (
                 <article className="product" key={p.id}>
                   <div className="product-photo">
-                    {p.photo_id ? (
-                      <img src={image(p.photo_id)} alt={p.name} loading="lazy" />
+                    {p.photo_ids[0] ? (
+                      <button className="product-gallery-trigger" aria-label={"Lihat foto " + p.name} onClick={() => setGallery(p)}>
+                        <img src={image(p.photo_ids[0])} alt={p.name} loading="lazy" />
+                        {p.photo_ids.length > 1 && <span className="photo-count">{p.photo_ids.length} foto</span>}
+                      </button>
                     ) : (
                       <div className="photo-placeholder">
                         <Icon name="box" size={48} />
@@ -110,7 +117,7 @@ export function Catalog() {
                       <strong>{money(p.price)}</strong>
                       <small>per {p.unit}</small>
                     </div>
-                    {me.user?.role !== "seller" && (
+                    {!isOperator(me.user?.role) && (
                       <button className="add-button" aria-label={"Tambah " + p.name} disabled={!p.stock || busy === p.id} onClick={() => add(p)}>
                         <Icon name="plus" size={18} />
                         <span>{busy === p.id ? "…" : "Tambah"}</span>
@@ -122,7 +129,7 @@ export function Catalog() {
             </div>
           ) : (
             <Empty title={q || category ? "Barang tidak ditemukan" : "Katalog sedang disiapkan"}>
-              <p>{q || category ? "Coba kata lain atau tampilkan semua kategori." : "Seller belum menambahkan barang. Silakan kembali lagi nanti."}</p>
+              <p>{q || category ? "Coba kata lain atau tampilkan semua kategori." : "Staf belum menambahkan barang. Silakan kembali lagi nanti."}</p>
               {(q || category) && (
                 <button
                   className="button secondary"
@@ -137,7 +144,7 @@ export function Catalog() {
             </Empty>
           )}
         </section>
-        {me.user?.role !== "seller" && (
+        {!isOperator(me.user?.role) && (
           <aside className="cart-panel">
             <h2 className="cart-top">
               Keranjang Anda <span>{count}</span>
@@ -146,7 +153,7 @@ export function Catalog() {
           </aside>
         )}
       </div>
-      {me.user?.role !== "seller" && (
+      {!isOperator(me.user?.role) && (
         <button ref={mobileCartRef} className="mobile-cart" onClick={() => setCartOpen(true)}>
           <span>
             <Icon name="bag" />
@@ -178,7 +185,7 @@ function Cart({ cart, error, loading, compact = false, onClose }: { cart: CartIt
   }
   if (loading && !cart.length) return <Loading />;
   if (error) return <ErrorBox message={error} />;
-  const invalid = cart.some((p) => p.archived || p.quantity > p.stock);
+  const invalid = cart.some((p) => p.quantity > p.stock);
   return (
     <>
       <ErrorBox message={error} />
@@ -188,8 +195,8 @@ function Cart({ cart, error, loading, compact = false, onClose }: { cart: CartIt
             {cart.map((p) => (
               <div className="cart-item" key={p.id}>
                 {!compact &&
-                  (p.photo_id ? (
-                    <img className="cart-photo" src={image(p.photo_id)} alt={p.name} />
+                  (p.photo_ids[0] ? (
+                    <img className="cart-photo" src={image(p.photo_ids[0])} alt={p.name} />
                   ) : (
                     <span className="cart-photo placeholder">
                       <Icon name="box" />
@@ -200,7 +207,7 @@ function Cart({ cart, error, loading, compact = false, onClose }: { cart: CartIt
                   <small>
                     {money(p.price)} / {p.unit}
                   </small>
-                  {(!!p.archived || p.quantity > p.stock) && <small className="danger-text">{p.archived ? "Tidak tersedia" : `Tersisa ${p.stock}. Kurangi jumlah.`}</small>}
+                  {p.quantity > p.stock && <small className="danger-text">{`Tersisa ${p.stock}. Kurangi jumlah.`}</small>}
                 </div>
                 <div className="cart-controls">
                   <div className="quantity">
@@ -210,7 +217,7 @@ function Cart({ cart, error, loading, compact = false, onClose }: { cart: CartIt
                     <span>{p.quantity}</span>
                     <button
                       type="button"
-                      disabled={!!busy || loading || p.quantity >= Math.min(p.stock, 999) || !!p.archived}
+                      disabled={!!busy || loading || p.quantity >= Math.min(p.stock, 999)}
                       aria-label={"Tambah " + p.name}
                       onClick={() => quantity(p, p.quantity + 1)}
                     >
@@ -309,7 +316,7 @@ export function Checkout() {
   if (c?.shipping_fee === null || (!bank && !qris))
     return (
       <Empty title="Checkout belum tersedia">
-        <p>Seller sedang menyiapkan ongkir dan metode pembayaran.</p>
+        <p>Toko sedang menyiapkan ongkir dan metode pembayaran.</p>
         <Link href="/">Kembali ke katalog</Link>
       </Empty>
     );

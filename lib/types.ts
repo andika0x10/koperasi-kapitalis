@@ -1,10 +1,18 @@
-export type Role = "buyer" | "seller";
+export type Role = "buyer" | "staff" | "owner";
+export type AccountStatus = "pending" | "active" | "reset_required";
+export const roleLabel: Record<Role, string> = { owner: "Owner", staff: "Staf", buyer: "Pelanggan" };
+export const isOperator = (role: Role | undefined) => role === "owner" || role === "staff";
+export interface PasswordLink {
+  username: string;
+  url: string;
+  expires_at: number;
+}
 export type Status = "pending" | "review" | "approved" | "rejected" | "expired" | "shipped" | "completed";
 export interface User {
   id: string;
   username: string;
   role: Role;
-  must_change_password: number;
+  status: AccountStatus;
 }
 export interface Product {
   id: string;
@@ -15,8 +23,7 @@ export interface Product {
   price: number;
   stock: number;
   revision: number;
-  photo_id: string | null;
-  archived: number;
+  photo_ids: string[];
 }
 export interface CartItem extends Product {
   quantity: number;
@@ -30,9 +37,8 @@ export interface Settings {
 }
 export interface Order {
   id: string;
-  user_id: string;
+  user_id: string | null;
   username?: string;
-  user_deleted_at?: number | null;
   status: Status;
   recipient: string;
   phone: string;
@@ -92,4 +98,10 @@ export interface SalesReportData {
   products: { product_id: string; name: string; unit: string; quantity: number; subtotal: number }[];
   transactions: Pick<Order, "id" | "recipient" | "status" | "decided_at" | "subtotal" | "shipping_fee" | "total">[];
   page: number;
+  operations: {
+    orders: { status: Status; count: number }[];
+    out_of_stock: { id: string; name: string; stock: number; unit: string }[];
+    low_stock: { id: string; name: string; stock: number; unit: string }[];
+    accounts: { role: Role; status: AccountStatus; count: number }[];
+  };
 }

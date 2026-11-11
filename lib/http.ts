@@ -1,5 +1,6 @@
 import { HttpError } from "./security";
-export const json = (data: unknown, status = 200, headers?: HeadersInit) => Response.json(data, { status, headers });
+export const json = (data: unknown, status = 200, headers?: HeadersInit) =>
+  Response.json(data, { status, headers: { "cache-control": "no-store", ...Object.fromEntries(new Headers(headers)) } });
 export async function body(request: Request): Promise<Record<string, unknown>> {
   if (!request.headers.get("content-type")?.startsWith("application/json")) throw new HttpError(415, "Gunakan data JSON.");
   const reader = request.body?.getReader();
@@ -34,6 +35,8 @@ export async function body(request: Request): Promise<Record<string, unknown>> {
 export function failure(error: unknown) {
   if (error instanceof HttpError) return json({ error: error.message }, error.status);
   const message = error instanceof Error ? error.message : "";
+  if (message.includes("password_link_guard")) return json({ error: "Link sudah kedaluwarsa, digunakan, atau dibatalkan. Minta link baru kepada owner." }, 400);
+  if (message.includes("PRODUCT_HAS_RUNNING_ORDERS")) return json({ error: "Selesaikan pesanan terkait sebelum menghapus barang." }, 409);
   if (message.includes("INSUFFICIENT_STOCK")) return json({ error: "Stok berubah. Periksa keranjang lalu coba lagi." }, 409);
   if (message.includes("UNIQUE constraint failed: users.username")) return json({ error: "Username sudah digunakan." }, 409);
   console.error("Request failed", { type: error instanceof Error ? error.name : "unknown" });

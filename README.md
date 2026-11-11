@@ -1,108 +1,115 @@
 # Koperasi Kapitalis
 
-Aplikasi pemesanan barang kebutuhan sehari-hari untuk banyak seller dengan hak setara dan banyak buyer. Antarmuka berbahasa Indonesia, IDR, dan waktu Asia/Jakarta.
+Toko tunggal untuk satu owner, banyak staf, dan banyak pelanggan. Antarmuka berbahasa Indonesia, harga IDR, dan waktu Asia/Jakarta. Seluruh penghapusan barang dan akun bersifat permanen; pesanan dan audit tidak dapat dihapus melalui aplikasi.
 
-## Stack dan penyimpanan
+## Stack
 
-- Vinext App Router, React, TypeScript, dan Cloudflare Workers.
-- D1 menyimpan seluruh data bisnis, sesi, dan attachment sebagai BLOB. Tidak menggunakan R2.
-- Durable Object `Commerce` menserialkan mutasi toko dan menjalankan alarm kedaluwarsa. D1 tetap sumber kebenaran; batch atomik, trigger stok, dan batas transisi menjadi pengaman saat retry/restart.
-- Durable Object `RateLimiter` membatasi login berdasarkan IP dan username, serta pendaftaran berdasarkan IP.
-- Password: scrypt native Workers (`N=16384, r=8, p=5`, salt acak). Token sesi disimpan sebagai SHA-256. Sesi kedaluwarsa setelah 7 hari tidak aktif atau maksimal 30 hari.
-- Public Sans di-host bersama aset aplikasi. Palet utama `#FF6F12`, latar `#FFFFFF`.
+- Vinext App Router, React, TypeScript, Cloudflare Workers, D1, dan Durable Objects.
+- D1 menyimpan data, sesi, dan gambar sebagai BLOB; tidak menggunakan R2.
+- Coordinator `Commerce` menserialkan mutasi toko. Batch D1 serta trigger menjaga transaksi, stok, revisi, dan transisi pesanan. `RateLimiter` membatasi autentikasi dan pemakaian link password.
+- Password menggunakan scrypt native Workers (`N=16384,r=8,p=5`). Token sesi dan link password disimpan sebagai SHA-256. Sesi berakhir setelah 7 hari tidak aktif atau maksimal 30 hari.
+- Public Sans di-host bersama aplikasi; putih, oranye `#FF6F12`, dan teks `#242424`.
 
 ## Menjalankan lokal
 
-Memerlukan Node.js 22.23+ yang kompatibel dengan versi CLI Cloudflare yang terpasang.
+Memerlukan Node.js 22.23+ yang kompatibel dengan CLI terpasang.
 
 ```powershell
 npm ci
 npm run db:migrate:local
-npm run seller:bootstrap -- --username seller --output .seller-credentials-local-new.txt
+npm run owner:bootstrap -- --username nama_owner --origin http://localhost:5173 --output .owner-credentials-local.txt
 npm run dev
 ```
 
-Database lokal berada di `.cloudflare/state`, sesuai Cloudflare Vite plugin. Pengujian integrasi memakai database Miniflare terpisah yang dibuang setelah tes, tanpa data produksi.
+Buka link pada berkas output dalam 1 jam, tentukan password, lalu masuk. Hapus berkas setelah aktivasi. Username owner ditentukan operator; tidak ada kredensial bawaan. Pilih nama output baru untuk setiap penerbitan. Data lokal berada di `.cloudflare/state`.
 
-## Deployment
+Pemulihan owner menggunakan username yang sama:
 
 ```powershell
-npx wrangler login
+npm run owner:bootstrap -- --username nama_owner --recover --origin http://localhost:5173 --output .owner-credentials-recovery.txt
+```
+
+Pemulihan langsung menonaktifkan password lama, membatalkan link sebelumnya, dan mencabut sesi. Link baru berlaku 1 jam dan sekali pakai. Jika kedaluwarsa, jalankan pemulihan lagi dengan nama output baru. CLI hanya mencetak lokasi output; token mentah tidak dicetak. `--persist-to` dapat memilih penyimpanan lokal terisolasi untuk pengujian.
+
+## Peran dan halaman
+
+| Kemampuan                                              | Owner | Staf  | Pelanggan |
+| ------------------------------------------------------ | ----- | ----- | --------- |
+| Kelola barang dan seluruh pesanan                      | Ya    | Ya    | Tidak     |
+| Ubah ongkir                                            | Ya    | Ya    | Tidak     |
+| Atur rekening dan QRIS                                 | Ya    | Tidak | Tidak     |
+| Buat/hapus akun staf dan pelanggan serta link password | Ya    | Tidak | Tidak     |
+| Statistik dan audit                                    | Ya    | Tidak | Tidak     |
+| Belanja dan pesanan sendiri                            | Tidak | Tidak | Ya        |
+
+- Operasional: `/kelola/produk`, `/kelola/pesanan`, `/kelola/pesanan/:id`.
+- Owner: `/owner/statistik`, `/owner/pengguna`, `/owner/log-aktivitas`.
+- Pengaturan akun: `/pengaturan#akun`, `#keamanan`, `#perangkat`; `#pengiriman` untuk owner/staf dan `#pembayaran` khusus owner.
+- Link password: `/atur-password#token=...`. URL `/seller` lama dialihkan ke penggantinya, lalu tetap diperiksa izinnya.
+- Owner tunggal dibuat melalui CLI, tidak dapat dihapus. Role semua akun tidak dapat diubah. Semua izin juga ditegakkan backend.
+
+## Akun dan link password
+
+Owner memilih Tambah staf atau Tambah pelanggan lalu memasukkan username saja. Akun berstatus `pending`, tanpa password yang bisa dipakai. Link ditampilkan untuk disalin dan dibagikan manual. Pelanggan tetap dapat mendaftar sendiri menggunakan username/password.
+
+`POST /api/users` menerima `{username,role:"staff"|"buyer"}` dan mengembalikan `{id,username,url,expires_at}`. `POST /api/users/:id/reset` mengembalikan `{username,url,expires_at}`. Hasil penerbitan tidak dapat dibaca ulang; terbitkan link baru jika hilang.
+
+Link baru selalu membatalkan link sebelumnya. Reset langsung mengganti status akun menjadi `reset_required`, mengosongkan hash password, dan mencabut seluruh sesi. Link berlaku tepat 1 jam, sekali pakai; hanya hash token yang disimpan. Token masuk fragmen URL dan body permintaan, tidak masuk query/path API atau audit. Pengguna menentukan password 12–128 karakter lalu login kembali; tidak otomatis masuk.
+
+`POST /api/password-links/validate` menerima `{token}` dan mengembalikan username serta kedaluwarsa. `POST /api/password-links/complete` menerima `{token,password}`. Keduanya publik dengan pemeriksaan origin dan rate limit; konsumsi link serta aktivasi bersifat atomik. Ganti password biasa melalui `/api/password` tetap memerlukan password saat ini, membatalkan link aktif, dan mencabut sesi perangkat lain.
+
+Tidak ada email atau notifikasi eksternal. Lupa password meminta link kepada owner; pemulihan owner melalui CLI.
+
+## Barang, foto, dan penghapusan
+
+Produk menggunakan `photo_ids: string[]` yang berurutan, maksimal 5 foto berbeda; foto pertama menjadi sampul. Foto opsional. Format JPEG/PNG/WebP, maksimal 1.500.000 byte per foto, dengan pemeriksaan MIME dan signature. Unggahan gagal ditampilkan per file, urutan dapat diubah dengan tombol, dan katalog memiliki galeri besar.
+
+- `POST /api/products` dan `PUT /api/products/:id`: owner/staf; data barang dan `photo_ids`. Edit memerlukan `revision` terbaru.
+- `DELETE /api/products/:id`: owner/staf; body `{revision}`. Barang dengan pesanan pending/review/approved/shipped ditolak dengan HTTP 409 dan daftar `{orders:[{id}]}`. Selesaikan pesanan terkait sebelum menghapus.
+- Penghapusan barang menghapus baris barang, keranjang terkait, dan foto yang tidak dipakai barang lain. Snapshot item pesanan tetap ada; identifier produk historis tidak bergantung pada katalog.
+- `DELETE /api/users/:id`: khusus owner untuk staf/pelanggan. Akun, sesi, keranjang, dan token dihapus secara fisik. Username dapat dipakai lagi, tetapi akun baru memiliki ID baru dan tidak mewarisi pesanan/akses lama.
+- Pesanan tetap menyimpan snapshot username pelanggan; audit serta riwayat tetap menyimpan snapshot pelaku. Referensi akun historis menjadi NULL. Foto produk, QRIS, dan bukti pembayaran yang masih diperlukan tetap tersedia sesuai izin.
+- `POST /api/attachments?kind=product|qris`: unggah biner gambar. Produk untuk owner/staf; QRIS khusus owner.
+- `DELETE /api/attachments/:id`: membuang foto produk milik pengunggah yang belum terhubung. Unggahan produk yang tidak dipakai lebih dari 24 jam dibersihkan alarm; foto terhubung selalu dipertahankan.
+- `GET /api/attachments/:id`: foto/QRIS publik; bukti pembayaran hanya pelanggan pemilik pesanan serta owner/staf, tanpa cache.
+
+Tidak tersedia arsip, pemulihan, atau filter akun terhapus. Dialog hapus menyebut objek dan dampak permanennya.
+
+## Pesanan dan statistik
+
+Checkout memerlukan pelanggan, maksimal 20 jenis barang dan 999 unit per barang. Keranjang tidak menahan stok. Checkout menahan stok selama 1 jam; harga, ongkir, alamat, serta instruksi pembayaran disalin ke pesanan. Perubahan total memerlukan konfirmasi ulang. Pelanggan tidak dapat mengubah atau membatalkan pesanan.
+
+Satu bukti pembayaran diunggah sebelum tenggat. Bukti tidak dapat diganti; retry identik aman. Bukti yang diterima mempertahankan stok sampai diperiksa. Staf/owner menyetujui atau menolak dengan alasan wajib saat menolak; keputusan final. Penolakan/kedaluwarsa mengembalikan stok sekali. Pesanan disetujui dilanjutkan ke dikirim (nama kurir wajib, tanpa resi), lalu selesai oleh staf/owner.
+
+`GET /api/reports/sales?from=YYYY-MM-DD&to=YYYY-MM-DD&page=0` khusus owner. Tanggal inklusif dalam WIB berdasarkan `decided_at` untuk approved/shipped/completed. Respons memuat `summary`, `daily`, 10 `products` terlaris berdasarkan unit, `transactions` (30 per halaman), `page`, dan `operations`.
+
+`operations` menggambarkan kondisi saat ini dan tidak mengikuti filter tanggal: pesanan per status; daftar barang stok 0 dan stok 1–5; jumlah akun per role/status. Harga memakai snapshot; tidak menghitung laba, kinerja staf, atau ekspor.
+
+## API dan audit
+
+Semua mutasi memerlukan Origin yang sama. Selain login, registrasi, dan konsumsi link password, mutasi juga memerlukan cookie sesi dan `x-csrf-token` dari `/api/me`. Respons error berbentuk `{error}`. JSON API memakai `Cache-Control: no-store`.
+
+`GET /api/users` khusus owner, filter `q`, `role=owner|staff|buyer`, `status=pending|active|reset_required`, serta `page` mulai 0, 30 baris per halaman. Katalog mendukung `q` dan `category`, dibatasi 500 barang.
+
+`GET /api/audit-logs` khusus owner: filter `actor`, `action`, `q`, pasangan `from`/`to` dalam WIB, dan `page`; maksimal 30 catatan per halaman, terbaru dahulu. Detail before/after memakai allowlist; password, hash password, token, isi gambar, dan data pribadi lengkap pesanan tidak dicatat. Kejadian mencakup aktivasi, penerbitan/pemakaian link, penghapusan, dan mutasi operasional. Pembacaan tidak dicatat. Retensi tetap 365 hari dengan alarm harian saat toko idle.
+
+## Migrasi dan rilis
+
+Migrasi `0005_owner_staff_photos.sql` tidak mengubah migrasi sebelumnya. Seller lama menjadi staf; password aktif tetap berlaku. Akun dengan password sementara menjadi `reset_required`, memerlukan link dari owner. Akun lama yang sudah ditandai terhapus dihapus fisik setelah snapshot dipenuhi. Foto tunggal dipindahkan menjadi foto pertama.
+
+Barang arsip lama dihapus permanen beserta foto yang tidak terpakai. Jika ada barang arsip dengan pesanan berjalan, migrasi gagal atomik dengan pesan `ARSIP_MASIH_MEMILIKI_PESANAN_BERJALAN`. Selesaikan pesanan memakai versi lama, lalu ulangi migrasi. Jangan menghapus pengaman tersebut.
+
+Perubahan schema ini memerlukan rilis terkoordinasi: verifikasi backup, gunakan waktu pemeliharaan, hentikan mutasi versi lama, terapkan migrasi, jalankan setup owner baru, lalu rilis kode baru dan verifikasi aktivasi/izin. Kode lama tidak kompatibel dengan schema baru; rollback kode saja tidak mengembalikan schema.
+
+Produksi memakai D1 `koperasi-kapitalis-db` dan Worker `koperasi-kapitalis`. Perintah remote hanya dijalankan saat rilis produksi memang diminta:
+
+```powershell
 npm run db:migrate:remote
-npm run seller:bootstrap -- --remote --username seller --output .seller-credentials.txt
+npm run owner:bootstrap -- --remote --username nama_owner --origin https://domain-toko-anda.example --output .owner-credentials-production.txt
 npm run deploy
 ```
 
-Bootstrap hanya dilakukan sekali. Akun seller produksi sudah disiapkan saat implementasi. Password awal berada di `.seller-credentials.txt`, diabaikan Git. Masuk melalui `/masuk`, lalu ganti password sementara. Setelah itu atur ongkir, rekening/QRIS, dan produk. Produksi dimulai tanpa produk contoh.
-
-`scripts/deploy.mjs` memakai token environment jika tersedia; jika tidak, mengambil token login Wrangler melalui subprocess. Token diteruskan ke CLI `cf` hanya melalui environment child process, tanpa mencetak atau menulis token ke proyek. Akun Cloudflare tujuan: `3733a7977c6783973d0ee237b086aa34`.
-
-D1 produksi: `koperasi-kapitalis-db`. Worker: `koperasi-kapitalis`. Jalankan migrasi sebelum deployment berikutnya. Untuk deploy output yang sudah dibangun: `npm run deploy -- --prebuilt`.
-
-## Pemulihan seller
-
-```powershell
-npm run seller:bootstrap -- --remote --username seller --recover --output .seller-credentials-recovery.txt
-```
-
-Username harus cocok dengan seller yang ada. Pemulihan mengganti password menjadi password sementara dan mencabut seluruh sesinya. Seller tambahan dibuat melalui halaman Pengguna. `--recover` hanya menargetkan seller aktif dengan username tersebut; akun terhapus tidak dapat dipulihkan. Bootstrap dan pemulihan tercatat sebagai tindakan Operator CLI. Pilih nama berkas output baru; jangan menimpa kredensial lama. Hapus berkas kredensial setelah password diganti.
-
-## Aturan pesanan
-
-1. Katalog publik; login buyer diperlukan untuk keranjang dan checkout. Maksimal 20 jenis barang per checkout, maksimal 999 unit per barang.
-2. Harga, ongkir, alamat, dan instruksi pembayaran disalin saat checkout. Server meminta konfirmasi ulang jika total berubah. Produk sederhana tanpa varian; produk dapat diarsipkan.
-3. Checkout menahan stok 1 jam. Keranjang tidak menahan stok. Pesanan tidak bisa diedit/dibatalkan buyer.
-4. Buyer mengunggah satu bukti JPEG/PNG/WebP maksimal 1.500.000 byte sebelum tenggat. Server memeriksa MIME dan signature; bukti tidak bisa diganti. Retry file identik tidak membuat bukti baru.
-5. Bukti diterima mempertahankan stok selama menunggu pemeriksaan. Alarm melepas stok pesanan tanpa bukti yang kedaluwarsa. Daftar/detail pesanan juga menyegarkan kedaluwarsa sebelum dibaca.
-6. Seller menyetujui atau menolak. Penolakan wajib beralasan. Keputusan final; stok dikembalikan hanya sekali jika ditolak/kedaluwarsa.
-7. Pesanan disetujui dilanjutkan ke dikirim (nama kurir wajib, tanpa nomor resi), lalu selesai oleh seller. Tidak ada integrasi kurir atau konfirmasi otomatis.
-8. Form edit produk membawa `revision`. Jika checkout atau tindakan lain mengubah stok, form lama ditolak supaya tidak menimpa stok terbaru. Stok pada form berarti stok tersedia di luar reservasi.
-
-## API
-
-Semua endpoint menggunakan same-origin cookie. Mutasi wajib membawa header `Origin` yang sesuai dan `x-csrf-token` dari `/api/me`, kecuali login/registrasi yang hanya memerlukan pemeriksaan origin. Respons error JSON berbentuk `{ "error": "pesan" }`.
-
-| Endpoint                                                             | Akses / fungsi                                                                                 |
-| -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `POST /api/register`, `POST /api/login`                              | Publik; username dan password; registrasi selalu buyer                                         |
-| `GET /api/me`                                                        | Identitas user dan token CSRF; user null jika belum masuk                                      |
-| `GET /api/products`                                                  | Katalog publik; `all=1` khusus seller; mendukung `q`, `category`                               |
-| `POST /api/products`, `PUT /api/products/:id`                        | Seller; edit/arsip memerlukan revision terbaru                                                 |
-| `GET /api/settings`, `PUT /api/settings`                             | Baca instruksi pembayaran publik; tulis khusus seller                                          |
-| `POST /api/attachments?kind=product\|qris`                           | Upload gambar khusus seller; body biner dan Content-Type gambar                                |
-| `GET /api/attachments/:id`                                           | Foto/QRIS publik; bukti hanya pemilik dan seller, tanpa cache                                  |
-| `GET /api/cart`, `PUT /api/cart`                                     | Buyer; ubah quantity, 0 untuk menghapus                                                        |
-| `POST /api/checkout`                                                 | Buyer; key idempoten, data penerima, payment_method, expected_total                            |
-| `GET /api/orders`, `GET /api/orders/:id`                             | Buyer hanya milik sendiri; seller seluruh pesanan                                              |
-| `POST /api/orders/:id/proof`                                         | Buyer pemilik; body biner gambar                                                               |
-| `POST /api/orders/:id/decision`                                      | Seller; status approved/rejected, reason                                                       |
-| `POST /api/orders/:id/ship`, `POST /api/orders/:id/complete`         | Seller; pengiriman dan penyelesaian                                                            |
-| `GET /api/users`, `POST /api/users`                                  | Seller; daftar/filter akun dan membuat buyer/seller dengan role tetap serta password sementara |
-| `DELETE /api/users/:id`, `POST /api/users/:id/reset`                 | Seller; hapus lunak permanen atau reset akun lain, mencabut seluruh sesi target                |
-| `PUT /api/username`                                                  | Pemilik akun; `{ username, current }`, mencabut sesi perangkat lain                            |
-| `GET /api/audit-logs`                                                | Seller; log perubahan/keamanan, filter pelaku/tindakan/objek/tanggal WIB                       |
-| `POST /api/password`                                                 | Kedua role; current dan password baru; sesi lain dicabut                                       |
-| `GET /api/sessions`, `POST /api/sessions/revoke`, `POST /api/logout` | Kedua role; sesi hanya milik sendiri                                                           |
-
-`GET /api/reports/sales?from=YYYY-MM-DD&to=YYYY-MM-DD&page=0` khusus seller. Rentang tanggal inklusif dalam WIB dan dihitung berdasarkan `decided_at` untuk pesanan approved/shipped/completed. Respons berisi `summary`, `daily`, `products` (10 terlaris berdasarkan unit), `transactions` (30 per halaman), dan `page`. Harga memakai snapshot pesanan; laporan tidak menghitung laba dan tidak memiliki ekspor.
-
-`PUT /api/settings` mendukung pembaruan parsial. Field yang tidak dikirim dipertahankan di coordinator agar penyimpanan bagian ongkir dan pembayaran tidak saling menimpa. `POST /api/orders/:id/ship` menerima `{ "courier": "Nama kurir" }` (wajib, maksimal 80 karakter). Nomor resi dihapus dari API dan database melalui migrasi `0003_remove_tracking.sql`; nama kurir yang sudah tersimpan tetap dipertahankan. Jalankan migrasi sebelum menjalankan versi ini.
-
-Halaman pembeli `/keranjang` berbagi kontrol dengan panel/popup katalog. Pengaturan memakai bagian URL `#akun`, `#keamanan`, `#perangkat`, `#pengiriman`, dan `#pembayaran` (dua terakhir khusus seller). Laporan berada di `/seller/laporan`.
-
-Daftar pesanan dan user memakai `page` mulai 0, 30 baris per halaman. Daftar pesanan mendukung `status`, user mendukung `q`, `role=buyer|seller`, dan `status=active|deleted|all` (default aktif). Katalog dibatasi 500 produk untuk toko tunggal ini.
-
-## Akun dan log aktivitas
-
-Migrasi `0004_users_audit.sql` menghapus batas satu seller, menambahkan hapus lunak permanen, dan memperluas audit serta identitas pelaku pada riwayat pesanan. Migrasi sebelumnya tidak diubah. Jalankan migrasi sebelum kode baru digunakan.
-
-Seller dapat membuat buyer/seller di `/seller/users`; role tidak dapat diubah. Password sementara ditampilkan sekali dan wajib diganti pada login pertama. Reset hanya untuk akun lain yang aktif. Akun sendiri dikelola di `/pengaturan#akun` (username) dan `#keamanan` (password). Penggantian username memerlukan password saat ini, mempertahankan perangkat saat ini, dan mencabut sesi lainnya. Username lama dapat digunakan lagi; snapshot audit tetap menyimpan identitas saat kejadian.
-
-Penghapusan tidak dapat dipulihkan. Username terakhir tetap dicadangkan dan semua sesi dicabut. Pesanan serta riwayat tetap tersimpan dan pesanan berjalan dapat diselesaikan seller. Penghapusan diri sendiri dan seller aktif terakhir ditolak; database juga melindungi seller terakhir.
-
-Halaman `/seller/log-aktivitas` hanya dapat dibaca seller. Tidak tersedia edit, hapus manual, atau ekspor. Endpoint `GET /api/audit-logs` menerima `actor` (pencarian snapshot username atau ID), `action` (kode persis), `q` (ID objek/detail), pasangan `from`/`to` (YYYY-MM-DD, tanggal inklusif WIB), dan `page` (mulai 0). Respons berupa array maksimal 30 catatan, urutan waktu/ID terbaru. Detail berisi field yang diizinkan, termasuk `before`/`after`; password/hash, token, isi gambar, dan data pribadi lengkap pesanan tidak dicatat. Log lama tanpa snapshot/detail ditampilkan sebagai tidak tersedia.
-
-Audit mencatat perubahan akun, keranjang, pesanan, produk, pengaturan, unggahan, autentikasi, pencabutan sesi, serta penolakan permintaan mutasi. Pembacaan data tidak dicatat. Mutasi dan log sukses memakai batch atomik; retry tanpa perubahan tidak menambah log sukses. Login gagal tidak mengklaim identitas pelaku: username yang dicoba dicatat sebagai detail bila valid. Retensi memakai 365 hari; alarm Commerce membersihkan log lama dan tetap dijadwalkan harian saat tidak ada pesanan pending. Alarm diaktifkan oleh permintaan mutasi pertama atau penyegaran status pesanan setelah deployment.
+Ganti origin dengan domain toko sebenarnya. Deployment memakai alur proyek yang sudah ada; tidak termasuk dalam implementasi lokal ini.
 
 ## Verifikasi
 
@@ -110,23 +117,11 @@ Audit mencatat perubahan akun, keranjang, pesanan, produk, pengaturan, unggahan,
 npm run typecheck
 npm test
 npm run build
-```
-
-Tes menjalankan Workers + D1 + Durable Objects di Miniflare: role/CSRF, persaingan stok terakhir, checkout bersamaan dengan key sama, snapshot harga/pembayaran, edit stok kedaluwarsa, alarm berulang, bukti sekali unggah dan batas ukuran, akses lintas akun, keputusan bersamaan/final, pengiriman, reset password, sesi, dan rate limit.
-
-Verifikasi perubahan UI dan akun: typecheck, 23 tes integrasi, dan build berhasil. Tes tambahan mencakup pengiriman dengan nama kurir saja, retry, penghapusan kolom resi, penyimpanan parsial/bersamaan, pembatasan akses laporan, batas tanggal WIB, snapshot harga, paginasi, dan pencegahan penghitungan ganda.
-
-Pengujian responsivitas memakai Playwright + Chromium:
-
-```powershell
-npx playwright install chromium
 npm run test:ui
 ```
 
-Runner membangun aplikasi dan menjalankan preview lokal di port 4180. Semua endpoint API diintersep dengan data pengujian; tes tidak mengubah akun, stok, atau pesanan sungguhan. Cakupan meliputi halaman publik, buyer, dan seller pada 19 lebar dari 320 sampai 1440 px, termasuk kedua sisi breakpoint 620, 700, 850, dan 1150 px. Nama panjang, nominal besar, daftar 30 baris, seluruh status pesanan, serta kondisi kosong/loading/error ikut diperiksa.
+Integrasi memakai Workers, D1, dan Durable Objects di Miniflare terisolasi. Cakupan termasuk tiga role, CSRF, stok bersamaan, snapshot, link kedaluwarsa/sekali pakai/penerbitan ulang, penghapusan fisik, audit tanpa rahasia, multi foto, dan alarm. Tes migrasi memakai data lama terisi serta memeriksa rollback atomik dan foreign key.
 
-Tes interaksi memeriksa notifikasi di atas tombol keranjang, error di dalam dialog, perubahan jumlah barang, checkout, dialog produk, pembuatan akun sementara, fokus/Escape, reduced motion, dan viewport pendek sebagai simulasi ruang saat keyboard terbuka. Screenshot tersimpan di `.test-artifacts/ui/`, bersama trace jika tes gagal. Screenshot katalog, formulir, checkout, pengaturan, dan halaman seller perlu ditinjau saat mengubah layout. Keyboard, notch/safe area, dan perilaku browser pada perangkat iOS/Android fisik tetap memerlukan pemeriksaan perangkat langsung; pengujian otomatis ini memakai viewport Chromium desktop.
+Playwright mengintersep API sehingga tidak mengubah data toko. Responsivitas diperiksa dari 320–1440 px untuk publik/pelanggan/staf/owner, termasuk nama panjang, nominal besar, kondisi loading/error/kosong, dialog, fokus keyboard, reduced motion, galeri, serta link password. Screenshot dan trace tersimpan di `.test-artifacts/ui/`.
 
-`npm audit` masih melaporkan advisory moderate pada dependency transitif pembuat gambar OpenGraph bawaan Vinext, yang tidak dipakai aplikasi ini. Hindari `npm audit fix --force` yang menawarkan downgrade major framework. Vite sudah diperbarui ke patch 8.3.6.
-
-Di luar versi pertama: email, notifikasi eksternal, promo, pembayaran otomatis, integrasi kurir, refund, dan retur.
+Di luar cakupan: email, promo, pembayaran otomatis, integrasi kurir, refund, retur, dan ekspor laporan.

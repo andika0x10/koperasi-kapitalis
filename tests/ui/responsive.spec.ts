@@ -12,8 +12,7 @@ const product = {
   price: 100000000,
   stock: 999,
   revision: 1,
-  photo_id: null,
-  archived: 0,
+  photo_ids: ["photo-ui-1", "photo-ui-2"],
 };
 const settings = { shipping_fee: 10000, bank_name: "Bank pengujian", bank_account: "12345678901234567890", bank_holder: "Nama pemilik rekening pengujian", qris_id: "qris-ui" };
 const order = {
@@ -36,8 +35,9 @@ const order = {
   events: [{ id: "event-ui", status: "pending", created_at: now, actor_username: "username_pengujian_panjang_1234567", note: "Catatan riwayat ".repeat(15) }],
 };
 
-async function fixture(page: Page, role: "public" | "buyer" | "seller", state = "filled") {
-  let quantity = 1;
+async function fixture(page: Page, role: "public" | "buyer" | "owner" | "staff", state = "filled") {
+  let quantity = 1,
+    uploads = 0;
   await page.route("**/api/**", async (route) => {
     const request = route.request(),
       path = new URL(request.url()).pathname;
@@ -48,7 +48,7 @@ async function fixture(page: Page, role: "public" | "buyer" | "seller", state = 
         body: `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="${height}" viewBox="0 0 600 ${height}"><rect width="600" height="${height}" fill="#f6f6f6"/><path d="M30 30h180v180H30zM390 30h180v180H390zM30 390h180v180H30z" fill="#242424"/><text x="30" y="300" font-size="30">Gambar pengujian UI</text></svg>`,
       });
     }
-    const user = { id: role, username: "username_pengujian_panjang_1234567", role, must_change_password: 0, created_at: now };
+    const user = { id: role, username: "username_pengujian_panjang_1234567", role, status: "active", created_at: now };
     const rows = Array.from({ length: 30 }, (_, i) => ({
       ...order,
       id: `order-ui-${i}`,
@@ -76,10 +76,10 @@ async function fixture(page: Page, role: "public" | "buyer" | "seller", state = 
     else if (path === "/api/users")
       data =
         request.method() === "POST"
-          ? { username: request.postDataJSON().username, password: "Temporary_UI_password_123456789" }
+          ? { username: request.postDataJSON().username, url: "http://127.0.0.1:4180/atur-password#token=" + "a".repeat(64), expires_at: now + 3600000 }
           : state === "empty"
             ? []
-            : Array.from({ length: 30 }, (_, i) => ({ ...user, id: "user-" + i, role: i % 2 ? "buyer" : "seller" }));
+            : Array.from({ length: 30 }, (_, i) => ({ ...user, id: "user-" + i, role: i % 2 ? "buyer" : "staff", status: ["active", "pending", "reset_required"][i % 3] }));
     else if (path === "/api/audit-logs")
       data =
         state === "empty"
@@ -97,6 +97,10 @@ async function fixture(page: Page, role: "public" | "buyer" | "seller", state = 
                 details: JSON.stringify({ before: { name: longName }, after: { name: longName + " diperbarui" } }),
               },
             ];
+    else if (path === "/api/attachments") data = { id: "uploaded-" + ++uploads };
+    else if (/^\/api\/users\/[^/]+\/reset$/.test(path))
+      data = { username: user.username, url: "http://127.0.0.1:4180/atur-password#token=" + "b".repeat(64), expires_at: now + 3600000 };
+    else if (path === "/api/password-links/validate") data = { username: "staf_baru", expires_at: now + 3600000 };
     else if (path === "/api/reports/sales")
       data = {
         summary: { orders: state === "empty" ? 0 : 100, total: order.total * 100, subtotal: order.subtotal * 100, shipping_fee: 1000000 },
@@ -104,6 +108,19 @@ async function fixture(page: Page, role: "public" | "buyer" | "seller", state = 
         products: [{ product_id: product.id, name: longName, unit: product.unit, quantity: 999, subtotal: order.subtotal }],
         transactions: state === "empty" ? [] : rows,
         page: 0,
+        operations: {
+          orders: [
+            { status: "review", count: 12 },
+            { status: "pending", count: 5 },
+          ],
+          out_of_stock: [{ id: "short", name: "Minyak goreng", stock: 0, unit: "liter" }],
+          low_stock: [{ id: product.id, name: longName, stock: 3, unit: product.unit }],
+          accounts: [
+            { role: "owner", status: "active", count: 1 },
+            { role: "staff", status: "active", count: 4 },
+            { role: "buyer", status: "active", count: 30 },
+          ],
+        },
       };
     else if (path === "/api/checkout") data = { id: order.id };
     await route.fulfill({ json: data });
@@ -139,7 +156,7 @@ async function noOverflow(page: Page) {
 
 const widths = [320, 375, 390, 430, 619, 620, 621, 699, 700, 701, 768, 849, 850, 851, 1024, 1149, 1150, 1151, 1440];
 for (const width of widths) {
-  for (const role of ["public", "buyer", "seller"] as const) {
+  for (const role of ["public", "buyer", "owner", "staff"] as const) {
     test(`${role}: seluruh halaman pada ${width}px`, async ({ page }, info) => {
       await page.setViewportSize({ width, height: 844 });
       await fixture(page, role);
@@ -150,21 +167,21 @@ for (const width of widths) {
             ? ["/", "/keranjang", "/checkout", "/pesanan", "/pesanan/order-ui", "/pengaturan#akun", "/pengaturan#keamanan", "/pengaturan#perangkat"]
             : [
                 "/",
-                "/seller",
-                "/seller/produk",
-                "/seller/users",
-                "/seller/log-aktivitas",
-                "/seller/laporan",
-                "/seller/pesanan/order-ui",
+                "/kelola/pesanan",
+                "/kelola/produk",
+                "/owner/pengguna",
+                "/owner/log-aktivitas",
+                "/owner/statistik",
+                "/kelola/pesanan/order-ui",
                 ...["akun", "keamanan", "perangkat", "pengiriman", "pembayaran"].map((s) => "/pengaturan#" + s),
-              ];
+              ].filter((path) => role === "owner" || (!path.startsWith("/owner") && !path.endsWith("#pembayaran")));
       for (const path of paths) {
         await test.step(path, async () => {
           await page.goto(path);
           await expect(page.locator("main h1").first()).toBeVisible();
           await expect(page.locator("main .loading")).toHaveCount(0);
-          if (path === "/seller/log-aktivitas") await page.getByText("Lihat detail", { exact: true }).click();
-          if (path === "/seller/users") {
+          if (path === "/owner/log-aktivitas") await page.getByText("Lihat detail", { exact: true }).click();
+          if (path === "/owner/pengguna") {
             const label = await page
               .locator('.users-table td[data-label="Username"]')
               .first()
@@ -172,7 +189,7 @@ for (const width of widths) {
             expect(label).toBe(width <= 620 ? '"Username"' : "none");
           }
           await noOverflow(page);
-          if (path === "/seller/laporan") {
+          if (path === "/owner/statistik") {
             for (const amount of await page.locator(".report-summary dd").all()) {
               const size = await amount.evaluate((el) => ({ height: el.getBoundingClientRect().height, line: parseFloat(getComputedStyle(el).lineHeight) }));
               expect(size.height).toBeLessThanOrEqual(size.line + 1);
@@ -235,8 +252,8 @@ test("notifikasi, keranjang, checkout, dan perubahan orientasi", async ({ page }
 test("dialog produk dan menu: scroll, fokus, layar pendek, reduced motion", async ({ page }, info) => {
   await page.setViewportSize({ width: 390, height: 300 });
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await fixture(page, "seller");
-  await page.goto("/seller/produk");
+  await fixture(page, "owner");
+  await page.goto("/kelola/produk");
   const trigger = page.getByRole("button", { name: "Tambah produk", exact: true });
   await trigger.click();
   const dialog = page.getByRole("dialog", { name: "Tambah produk", exact: true });
@@ -257,7 +274,7 @@ test("dialog produk dan menu: scroll, fokus, layar pendek, reduced motion", asyn
 });
 
 for (const state of ["empty", "error", "loading"]) {
-  for (const role of ["public", "buyer", "seller"] as const)
+  for (const role of ["public", "buyer", "owner", "staff"] as const)
     test(`${role}: kondisi ${state} pada mobile`, async ({ page }) => {
       await page.setViewportSize({ width: 320, height: 740 });
       await fixture(page, role, state);
@@ -266,7 +283,9 @@ for (const state of ["empty", "error", "loading"]) {
           ? ["/"]
           : role === "buyer"
             ? ["/", "/keranjang", "/pesanan"]
-            : ["/", "/seller", "/seller/produk", "/seller/users", "/seller/log-aktivitas", "/seller/laporan"];
+            : ["/", "/kelola/pesanan", "/kelola/produk", "/owner/pengguna", "/owner/log-aktivitas", "/owner/statistik"].filter(
+                (path) => role === "owner" || !path.startsWith("/owner")
+              );
       for (const path of paths) {
         await page.goto(path);
         await expect(page.locator("main h1").first()).toBeVisible();
@@ -296,10 +315,10 @@ test("error keranjang terlihat dan dapat ditutup di dalam dialog", async ({ page
   await expect(dialog).toBeVisible();
 });
 
-test("aksi seller dan password sementara pada mobile", async ({ page }, info) => {
+test("aksi owner dan link aktivasi pada mobile", async ({ page }, info) => {
   await page.setViewportSize({ width: 320, height: 740 });
-  await fixture(page, "seller");
-  await page.goto("/seller/produk");
+  await fixture(page, "owner");
+  await page.goto("/kelola/produk");
   await page.getByRole("button", { name: "Tambah produk", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Tambah produk", exact: true });
   await dialog.getByLabel("Nama barang", { exact: true }).fill("Barang pengujian");
@@ -309,17 +328,19 @@ test("aksi seller dan password sementara pada mobile", async ({ page }, info) =>
   await dialog.getByRole("button", { name: "Tambah produk", exact: true }).click();
   await expect(dialog).not.toBeVisible();
   await expect(page.locator(".toast")).toHaveText(/Produk ditambahkan/);
-  await page.goto("/seller/users");
-  await page.getByRole("button", { name: "Tambah pengguna", exact: true }).click();
-  await page.getByLabel("Username", { exact: true }).fill("buyer_ui_test");
-  await page.getByRole("button", { name: "Buat akun", exact: true }).click();
-  await expect(page.locator(".credential code")).toHaveText("Temporary_UI_password_123456789");
+  await page.goto("/owner/pengguna");
+  await page.getByRole("button", { name: "Tambah staf", exact: true }).click();
+  const create = page.getByRole("dialog", { name: "Tambah staf", exact: true });
+  await create.getByLabel("Username", { exact: true }).fill("staf_ui_test");
+  await expect(create.locator('input[type="password"]')).toHaveCount(0);
+  await create.getByRole("button", { name: "Buat akun dan link aktivasi", exact: true }).click();
+  const link = page.getByRole("dialog", { name: "Bagikan link password" });
+  await expect(link.getByLabel("Link aktivasi atau reset")).toHaveValue(/atur-password#token=/);
   await noOverflow(page);
-  await page.locator(".credential").scrollIntoViewIfNeeded();
-  await page.screenshot({ path: info.outputPath("temporary-password-320.png") });
+  await page.screenshot({ path: info.outputPath("activation-link-320.png") });
 });
 
-for (const role of ["buyer", "seller"] as const)
+for (const role of ["buyer", "owner"] as const)
   test(`${role}: seluruh status detail pesanan`, async ({ page }) => {
     await page.setViewportSize({ width: 320, height: 740 });
     await fixture(page, role);
@@ -336,9 +357,143 @@ for (const role of ["buyer", "seller"] as const)
           },
         })
       );
-      await page.goto((role === "seller" ? "/seller" : "") + "/pesanan/order-ui");
+      await page.goto((role === "owner" ? "/kelola" : "") + "/pesanan/order-ui");
       await expect(page.locator("main h1")).toBeVisible();
-      if (role === "seller" && status === "review") await page.getByRole("button", { name: "Tolak pesanan", exact: true }).click();
+      if (role === "owner" && status === "review") await page.getByRole("button", { name: "Tolak pesanan", exact: true }).click();
       await noOverflow(page);
     }
   });
+
+test("galeri foto: thumbnail, keyboard, fokus dan mobile", async ({ page }, info) => {
+  await page.setViewportSize({ width: 390, height: 740 });
+  await fixture(page, "buyer");
+  await page.goto("/");
+  const trigger = page.getByRole("button", { name: "Lihat foto " + longName, exact: true });
+  await trigger.click();
+  const gallery = page.getByRole("dialog", { name: longName, exact: true });
+  await expect(gallery).toBeVisible();
+  await expect(gallery.locator(".gallery-main")).toHaveAttribute("src", "/api/attachments/photo-ui-1");
+  await gallery.getByRole("button", { name: "Berikutnya", exact: true }).click();
+  await expect(gallery.locator(".gallery-main")).toHaveAttribute("src", "/api/attachments/photo-ui-2");
+  await page.keyboard.press("ArrowLeft");
+  await expect(gallery.locator(".gallery-main")).toHaveAttribute("src", "/api/attachments/photo-ui-1");
+  await noOverflow(page);
+  await page.screenshot({ path: info.outputPath("gallery-390.png") });
+  await page.keyboard.press("Escape");
+  await expect(trigger).toBeFocused();
+});
+
+const testImage = {
+  name: "barang.png",
+  mimeType: "image/png",
+  buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a8m8AAAAASUVORK5CYII=", "base64"),
+};
+
+test("multi foto: gagal sebagian, tambah ulang, urutkan dan simpan", async ({ page }, info) => {
+  await page.setViewportSize({ width: 390, height: 740 });
+  await fixture(page, "staff");
+  let upload = 0;
+  await page.route("**/api/attachments?kind=product", async (route) => {
+    upload++;
+    await route.fulfill(upload === 2 ? { status: 400, json: { error: "Unggahan kedua ditolak. Pilih ulang file." } } : { status: 201, json: { id: "new-photo-" + upload } });
+  });
+  await page.goto("/kelola/produk");
+  await page.getByRole("button", { name: "Tambah produk", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Tambah produk", exact: true });
+  for (const [label, value] of [
+    ["Nama barang", "Beras"],
+    ["Kategori", "Dapur"],
+    ["Satuan", "kg"],
+    ["Harga (Rp)", "15000"],
+  ])
+    await dialog.getByLabel(label, { exact: true }).fill(value);
+  await dialog.getByLabel("Tambah foto", { exact: true }).setInputFiles([testImage, { ...testImage, name: "gagal.png" }]);
+  await expect(dialog.getByText("Unggahan kedua ditolak. Pilih ulang file.")).toBeVisible();
+  await expect(dialog.locator(".photo-list li")).toHaveCount(1);
+  await dialog.getByLabel("Tambah foto", { exact: true }).setInputFiles({ ...testImage, name: "ulang.png" });
+  await expect(dialog.locator(".photo-list li")).toHaveCount(2);
+  await dialog.getByRole("button", { name: "Pindahkan foto 2 ke kiri", exact: true }).click();
+  await expect(dialog.locator(".photo-list img").first()).toHaveAttribute("src", "/api/attachments/new-photo-3");
+  await noOverflow(page);
+  await page.screenshot({ path: info.outputPath("multi-photo-390.png") });
+  const request = page.waitForRequest((r) => new URL(r.url()).pathname === "/api/products" && r.method() === "POST");
+  await dialog.getByRole("button", { name: "Tambah produk", exact: true }).click();
+  const body = (await request).postDataJSON();
+  expect(body.photo_ids).toEqual(["new-photo-3", "new-photo-1"]);
+  expect(body.archived).toBeUndefined();
+  await expect(dialog).not.toBeVisible();
+});
+
+test("tutup editor membuang unggahan draft", async ({ page }) => {
+  await fixture(page, "staff");
+  await page.goto("/kelola/produk");
+  await page.getByRole("button", { name: "Tambah produk", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Tambah produk", exact: true });
+  await dialog.getByLabel("Tambah foto", { exact: true }).setInputFiles(testImage);
+  await expect(dialog.locator(".photo-list li")).toHaveCount(1);
+  const discard = page.waitForRequest((r) => r.method() === "DELETE" && r.url().includes("/api/attachments/uploaded-1"));
+  await page.keyboard.press("Escape");
+  await discard;
+});
+
+test("hapus barang menampilkan pesanan penghambat di dialog", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 740 });
+  await fixture(page, "staff");
+  await page.route("**/api/products/product-ui", (route) =>
+    route.fulfill({ status: 409, json: { error: "Selesaikan pesanan terkait sebelum menghapus barang.", orders: [{ id: "blocked-order" }] } })
+  );
+  await page.goto("/kelola/produk");
+  await page.getByRole("button", { name: "Hapus permanen", exact: true }).first().click();
+  const dialog = page.getByRole("dialog", { name: "Hapus barang permanen", exact: true });
+  await dialog.getByRole("button", { name: "Hapus permanen", exact: true }).click();
+  await expect(dialog.getByRole("link", { name: "Pesanan blocked-", exact: true })).toHaveAttribute("href", "/kelola/pesanan/blocked-order");
+  await noOverflow(page);
+});
+
+test("halaman link password: konfirmasi, token dalam body dan kembali masuk", async ({ page }, info) => {
+  await page.setViewportSize({ width: 320, height: 740 });
+  await fixture(page, "public");
+  const token = "a".repeat(64);
+  await page.goto("/atur-password#token=" + token);
+  await expect(page.getByText("staf_baru", { exact: true })).toBeVisible();
+  await page.getByLabel("Password baru", { exact: true }).fill("password-baru-123");
+  await page.getByLabel("Ulangi password baru", { exact: true }).fill("password-salah-123");
+  await page.getByRole("button", { name: "Simpan password", exact: true }).click();
+  await expect(page.getByText("Konfirmasi password belum sama.")).toBeVisible();
+  await page.getByLabel("Ulangi password baru", { exact: true }).fill("password-baru-123");
+  await noOverflow(page);
+  await page.screenshot({ path: info.outputPath("set-password-320.png") });
+  const complete = page.waitForRequest((r) => new URL(r.url()).pathname === "/api/password-links/complete");
+  await page.getByRole("button", { name: "Simpan password", exact: true }).click();
+  const req = await complete;
+  expect(req.postDataJSON()).toEqual({ token, password: "password-baru-123" });
+  expect(req.url()).not.toContain(token);
+  await expect(page).toHaveURL(/\/masuk$/);
+});
+
+test("link kedaluwarsa menjelaskan langkah berikutnya", async ({ page }) => {
+  await fixture(page, "public");
+  await page.route("**/api/password-links/validate", (route) =>
+    route.fulfill({ status: 400, json: { error: "Link sudah kedaluwarsa, digunakan, atau dibatalkan. Minta link baru kepada owner." } })
+  );
+  await page.goto("/atur-password#token=" + "a".repeat(64));
+  await expect(page.getByText(/Minta link baru kepada owner/)).toBeVisible();
+  await expect(page.locator('input[type="password"]')).toHaveCount(0);
+});
+
+test("akses staf dan pengalihan URL lama", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 740 });
+  await fixture(page, "staff");
+  await page.goto("/seller/produk");
+  await expect(page).toHaveURL(/\/kelola\/produk$/);
+  await page.getByRole("button", { name: "Buka menu navigasi" }).click();
+  const menu = page.getByRole("dialog", { name: "Menu", exact: true });
+  await expect(menu.getByRole("link", { name: "Pesanan", exact: true })).toBeVisible();
+  await expect(menu.getByRole("link", { name: "Pengguna", exact: true })).toHaveCount(0);
+  await expect(menu.getByRole("link", { name: "Statistik", exact: true })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await page.goto("/owner/statistik");
+  await expect(page.getByRole("heading", { name: "Halaman tidak tersedia" })).toBeVisible();
+  await page.goto("/pengaturan#pembayaran");
+  await expect(page.getByRole("heading", { name: "Akun", exact: true })).toBeVisible();
+});

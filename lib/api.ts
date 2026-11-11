@@ -5,6 +5,7 @@ import { HttpError } from "./security";
 import { auditLogs, pageNumber } from "./audit";
 import { salesReport } from "./reports";
 import type { Order } from "./types";
+import { productPhotos } from "./products";
 
 export async function api(request: Request, env: Env): Promise<Response> {
   try {
@@ -17,24 +18,22 @@ export async function api(request: Request, env: Env): Promise<Response> {
     }
     if (path === "/api/me" && method === "GET") {
       const auth = await authenticate(request, env, false);
-      return json({ user: auth ? { id: auth.id, username: auth.username, role: auth.role, must_change_password: auth.must_change_password } : null, csrf: auth?.csrf || null });
+      return json({ user: auth ? { id: auth.id, username: auth.username, role: auth.role, status: auth.status } : null, csrf: auth?.csrf || null });
     }
     if (path === "/api/products" && method === "GET") {
       const auth = url.searchParams.get("all") === "1" ? await authenticate(request, env) : null;
       if (auth) {
-        role(auth, "seller");
+        role(auth, "owner", "staff");
         unlocked(auth);
       }
       const query = url.searchParams.get("q")?.slice(0, 150) || "",
         category = url.searchParams.get("category")?.slice(0, 60) || "";
       const products = await db
-        .prepare(
-          `SELECT * FROM products WHERE (?=1 OR archived=0) AND (?='' OR instr(lower(name),lower(?))>0 OR instr(lower(description),lower(?))>0) AND (?='' OR category=?) ORDER BY archived,name LIMIT 500`
-        )
-        .bind(auth ? 1 : 0, query, query, query, category, category)
+        .prepare(`SELECT * FROM products WHERE (?='' OR instr(lower(name),lower(?))>0 OR instr(lower(description),lower(?))>0) AND (?='' OR category=?) ORDER BY name LIMIT 500`)
+        .bind(query, query, query, category, category)
         .all();
-      const categories = await db.prepare("SELECT DISTINCT category FROM products WHERE archived=0 ORDER BY category").all<{ category: string }>();
-      return json({ products: products.results, categories: categories.results.map((c) => c.category) });
+      const categories = await db.prepare("SELECT DISTINCT category FROM products ORDER BY category").all<{ category: string }>();
+      return json({ products: await productPhotos(db, products.results as { id: string }[]), categories: categories.results.map((c) => c.category) });
     }
     if (path === "/api/settings" && method === "GET") return json(await db.prepare("SELECT * FROM settings WHERE id=1").first());
     const attachment = path.match(/^\/api\/attachments\/([^/]+)$/);
@@ -47,7 +46,8 @@ export async function api(request: Request, env: Env): Promise<Response> {
       if (meta.kind === "proof") {
         const auth = (await authenticate(request, env))!;
         unlocked(auth);
-        if (auth.role !== "seller" && auth.id !== meta.owner_id) throw new HttpError(404, "Gambar tidak ditemukan.");
+        if (auth.role === "buyer" && !(await db.prepare("SELECT id FROM orders WHERE proof_id=? AND user_id=?").bind(meta.id, auth.id).first()))
+          throw new HttpError(404, "Gambar tidak ditemukan.");
       }
       const result = await db.prepare("SELECT data FROM attachments WHERE id=?").bind(meta.id).first<{ data: number[] | ArrayBuffer }>();
       const bytes = Array.isArray(result!.data) ? new Uint8Array(result!.data) : new Uint8Array(result!.data);
@@ -71,12 +71,21 @@ export async function api(request: Request, env: Env): Promise<Response> {
     }
     unlocked(auth);
     if (path === "/api/reports/sales") {
-      role(auth, "seller");
+      role(auth, "owner");
+      const expired = await env.COMMERCE.get(env.COMMERCE.idFromName("store")).fetch("https://internal/internal/expire");
+      if (!expired.ok) throw new HttpError(503, "Status pesanan belum tersedia. Coba lagi.");
       return json(await salesReport(db, url));
     }
     if (path === "/api/cart") {
       role(auth, "buyer");
-      return json((await db.prepare("SELECT p.*,c.quantity FROM cart_items c JOIN products p ON p.id=c.product_id WHERE c.user_id=? ORDER BY p.name").bind(auth.id).all()).results);
+      return json(
+        await productPhotos(
+          db,
+          (await db.prepare("SELECT p.*,c.quantity FROM cart_items c JOIN products p ON p.id=c.product_id WHERE c.user_id=? ORDER BY p.name").bind(auth.id).all()).results as {
+            id: string;
+          }[]
+        )
+      );
     }
     if (path === "/api/orders" || /^\/api\/orders\/[^/]+$/.test(path)) {
       const expired = await env.COMMERCE.get(env.COMMERCE.idFromName("store")).fetch("https://internal/internal/expire");
@@ -86,14 +95,14 @@ export async function api(request: Request, env: Env): Promise<Response> {
           status = url.searchParams.get("status") || "";
         const result = await db
           .prepare(
-            `SELECT o.*,u.username,u.deleted_at AS user_deleted_at FROM orders o JOIN users u ON u.id=o.user_id WHERE (?='seller' OR o.user_id=?) AND (?='' OR o.status=?) ORDER BY CASE WHEN o.status='review' THEN 0 ELSE 1 END,o.created_at DESC LIMIT 30 OFFSET ?`
+            `SELECT o.*,o.buyer_username AS username FROM orders o WHERE (? IN ('owner','staff') OR o.user_id=?) AND (?='' OR o.status=?) ORDER BY CASE WHEN o.status='review' THEN 0 ELSE 1 END,o.created_at DESC LIMIT 30 OFFSET ?`
           )
           .bind(auth.role, auth.id, status, status, page * 30)
           .all();
         return json(result.results);
       }
       const order = await db
-        .prepare("SELECT o.*,u.username,u.deleted_at AS user_deleted_at FROM orders o JOIN users u ON u.id=o.user_id WHERE o.id=? AND (?='seller' OR o.user_id=?)")
+        .prepare("SELECT o.*,o.buyer_username AS username FROM orders o WHERE o.id=? AND (? IN ('owner','staff') OR o.user_id=?)")
         .bind(path.split("/").pop(), auth.role, auth.id)
         .first<Order>();
       if (!order) throw new HttpError(404, "Pesanan tidak ditemukan.");
@@ -104,24 +113,24 @@ export async function api(request: Request, env: Env): Promise<Response> {
       return json({ ...order, items: items.results, events: events.results });
     }
     if (path === "/api/users") {
-      role(auth, "seller");
+      role(auth, "owner");
       const q = (url.searchParams.get("q") || "").slice(0, 32),
         filter = url.searchParams.get("role") || "",
-        status = url.searchParams.get("status") || "active";
-      if (!["", "buyer", "seller"].includes(filter) || !["active", "deleted", "all"].includes(status)) throw new HttpError(400, "Filter tidak valid.");
+        status = url.searchParams.get("status") || "";
+      if (!["", "buyer", "staff", "owner"].includes(filter) || !["", "active", "pending", "reset_required"].includes(status)) throw new HttpError(400, "Filter tidak valid.");
       return json(
         (
           await db
             .prepare(
-              "SELECT id,username,role,must_change_password,created_at,deleted_at FROM users WHERE instr(lower(username),lower(?))>0 AND (?='' OR role=?) AND (?='all' OR (?='active' AND deleted_at IS NULL) OR (?='deleted' AND deleted_at IS NOT NULL)) ORDER BY created_at DESC,id DESC LIMIT 30 OFFSET ?"
+              "SELECT id,username,role,status,created_at FROM users WHERE instr(lower(username),lower(?))>0 AND (?='' OR role=?) AND (?='' OR status=?) ORDER BY created_at DESC,id DESC LIMIT 30 OFFSET ?"
             )
-            .bind(q, filter, filter, status, status, status, pageNumber(url) * 30)
+            .bind(q, filter, filter, status, status, pageNumber(url) * 30)
             .all()
         ).results
       );
     }
     if (path === "/api/audit-logs") {
-      role(auth, "seller");
+      role(auth, "owner");
       return json(await auditLogs(env, url));
     }
     throw new HttpError(404, "Halaman tidak ditemukan.");

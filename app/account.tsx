@@ -3,13 +3,13 @@ import React, { useEffect, useState, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Settings, Session } from "../lib/types";
-import { date } from "../lib/types";
+import { date, isOperator, roleLabel } from "../lib/types";
 import { useApp, useData, Icon, ErrorBox, Loading, Field, ActionForm, PhotoUpload } from "./ui";
 export function AuthPage({ register }: { register: boolean }) {
   const { api, refresh, me, notify } = useApp(),
     router = useRouter();
   useEffect(() => {
-    if (me.user) router.replace(me.user.must_change_password ? "/pengaturan" : me.user.role === "seller" ? "/seller" : "/");
+    if (me.user) router.replace(me.user.role === "owner" ? "/owner/statistik" : me.user.role === "staff" ? "/kelola/pesanan" : "/");
   }, [me.user, router]);
   return (
     <div className="auth-layout">
@@ -27,7 +27,7 @@ export function AuthPage({ register }: { register: boolean }) {
         </div>
       </section>
       <section className="auth-panel">
-        <h2>{register ? "Buat akun buyer" : "Masuk ke akun"}</h2>
+        <h2>{register ? "Buat akun pelanggan" : "Masuk ke akun"}</h2>
         <p className="muted">Cukup username dan password. Tanpa email.</p>
         <ActionForm
           key={register ? "register" : "login"}
@@ -52,9 +52,87 @@ export function AuthPage({ register }: { register: boolean }) {
           )}
         </ActionForm>
         <p className="auth-switch">
-          {register ? "Sudah punya akun?" : "Belum punya akun?"} <Link href={register ? "/masuk" : "/daftar"}>{register ? "Masuk" : "Daftar sebagai buyer"}</Link>
+          {register ? "Sudah punya akun?" : "Belum punya akun?"} <Link href={register ? "/masuk" : "/daftar"}>{register ? "Masuk" : "Daftar sebagai pelanggan"}</Link>
         </p>
-        {!register && <p className="fine">Lupa password? Minta seller mereset password akun Anda.</p>}
+        {!register && <p className="fine">Lupa password? Minta link reset password kepada owner. Link berlaku 1 jam.</p>}
+      </section>
+    </div>
+  );
+}
+export function SetPassword() {
+  const { api, refresh, notify } = useApp(),
+    router = useRouter();
+  const [token, setToken] = useState(""),
+    [account, setAccount] = useState<{ username: string; expires_at: number } | null>(null),
+    [error, setError] = useState(""),
+    [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let active = true;
+    const value = new URLSearchParams(location.hash.slice(1)).get("token") || "";
+    setToken(value);
+    if (!value) {
+      setError("Link tidak lengkap. Minta link baru kepada owner.");
+      setLoading(false);
+      return;
+    }
+    api<{ username: string; expires_at: number }>("/api/password-links/validate", "POST", { token: value })
+      .then((result) => {
+        if (active) setAccount(result);
+      })
+      .catch((e) => {
+        if (active) setError(e.message);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [api]);
+  return (
+    <div className="auth-layout password-layout">
+      <section className="auth-intro">
+        <h1>Password Anda, akses Anda.</h1>
+        <p>Tentukan password untuk mengaktifkan kembali akses akun. Link berlaku 1 jam dan hanya dapat digunakan sekali.</p>
+      </section>
+      <section className="auth-panel">
+        <h2>Atur password</h2>
+        {loading ? (
+          <Loading />
+        ) : error ? (
+          <>
+            <ErrorBox message={error} />
+            <Link href="/masuk" className="button secondary">
+              Kembali ke masuk
+            </Link>
+          </>
+        ) : (
+          account && (
+            <>
+              <p>
+                Untuk akun <strong>{account.username}</strong>. Berlaku sampai {date(account.expires_at)}.
+              </p>
+              <ActionForm
+                label="Simpan password"
+                onSubmit={async (f) => {
+                  if (f.get("password") !== f.get("confirm")) throw new Error("Konfirmasi password belum sama.");
+                  await api("/api/password-links/complete", "POST", { token, password: f.get("password") });
+                  history.replaceState(history.state, "", "/atur-password");
+                  await refresh();
+                  notify("Password disimpan. Silakan masuk.");
+                  router.replace("/masuk");
+                }}
+              >
+                <Field label="Password baru" hint="12–128 karakter.">
+                  <input name="password" type="password" autoComplete="new-password" minLength={12} maxLength={128} required />
+                </Field>
+                <Field label="Ulangi password baru">
+                  <input name="confirm" type="password" autoComplete="new-password" minLength={12} maxLength={128} required />
+                </Field>
+              </ActionForm>
+            </>
+          )
+        )}
       </section>
     </div>
   );
@@ -69,17 +147,12 @@ export function AccountSettings() {
     [usernameVersion, setUsernameVersion] = useState(0);
   const navigationState = useRef({ section, dirty });
   navigationState.current = { section, dirty };
-  const forced = !!me.user?.must_change_password;
   const sections = [
     ["akun", "Akun"],
     ["keamanan", "Keamanan"],
     ["perangkat", "Perangkat"],
-    ...(me.user?.role === "seller"
-      ? [
-          ["pengiriman", "Pengiriman"],
-          ["pembayaran", "Pembayaran"],
-        ]
-      : []),
+    ...(isOperator(me.user?.role) ? [["pengiriman", "Pengiriman"]] : []),
+    ...(me.user?.role === "owner" ? [["pembayaran", "Pembayaran"]] : []),
   ];
   useEffect(() => {
     const sync = () => {
@@ -117,7 +190,7 @@ export function AccountSettings() {
       document.removeEventListener("click", navigate, true);
     };
   }, [dirty]);
-  const active = forced ? "keamanan" : section;
+  const active = section;
   const select = (value: string) => {
     if (dirty && !window.confirm("Perubahan belum disimpan. Pindah bagian?")) return;
     navigationState.current = { section: value, dirty: false };
@@ -134,29 +207,18 @@ export function AccountSettings() {
           <p>Kelola password dan perangkat yang memiliki akses.</p>
         </div>
       </div>
-      {!!me.user?.must_change_password && (
-        <div className="alert">
-          <p>Anda memakai password sementara. Ganti password sebelum melanjutkan.</p>
-        </div>
-      )}
       <div className="settings-shell">
         <aside className="settings-navigation">
           <div className="settings-desktop">
             {sections.map(([id, label]) => (
-              <button
-                key={id}
-                disabled={forced && id !== "keamanan"}
-                className={"settings-link" + (active === id ? " active" : "")}
-                aria-current={active === id ? "page" : undefined}
-                onClick={() => select(id)}
-              >
+              <button key={id} className={"settings-link" + (active === id ? " active" : "")} aria-current={active === id ? "page" : undefined} onClick={() => select(id)}>
                 {label}
               </button>
             ))}
           </div>
           <select className="settings-select" aria-label="Bagian pengaturan" value={active} onChange={(e) => select(e.target.value)}>
             {sections.map(([id, label]) => (
-              <option key={id} value={id} disabled={forced && id !== "keamanan"}>
+              <option key={id} value={id}>
                 {label}
               </option>
             ))}
@@ -173,40 +235,38 @@ export function AccountSettings() {
                 </div>
                 <div>
                   <dt>Peran</dt>
-                  <dd>{me.user?.role === "seller" ? "Seller" : "Buyer"}</dd>
+                  <dd>{me.user ? roleLabel[me.user.role] : ""}</dd>
                 </div>
               </dl>
-              {!forced && (
-                <ActionForm
-                  key={usernameVersion}
-                  label="Simpan username"
-                  onSubmit={async (f) => {
-                    await api("/api/username", "PUT", { username: f.get("username"), current: f.get("current") });
-                    await refresh();
-                    changed();
-                    setDirty(false);
-                    setUsernameVersion((v) => v + 1);
-                    notify("Username disimpan. Sesi perangkat lain telah dicabut.");
-                  }}
-                >
-                  <Field label="Username baru" hint="3–32 huruf, angka, atau garis bawah. Perangkat lain akan keluar setelah username berubah.">
-                    <input
-                      name="username"
-                      defaultValue={me.user?.username}
-                      pattern="[a-zA-Z0-9_]{3,32}"
-                      minLength={3}
-                      maxLength={32}
-                      required
-                      autoComplete="username"
-                      autoCapitalize="none"
-                      spellCheck={false}
-                    />
-                  </Field>
-                  <Field label="Password saat ini">
-                    <input name="current" type="password" autoComplete="current-password" required maxLength={128} />
-                  </Field>
-                </ActionForm>
-              )}
+              <ActionForm
+                key={usernameVersion}
+                label="Simpan username"
+                onSubmit={async (f) => {
+                  await api("/api/username", "PUT", { username: f.get("username"), current: f.get("current") });
+                  await refresh();
+                  changed();
+                  setDirty(false);
+                  setUsernameVersion((v) => v + 1);
+                  notify("Username disimpan. Sesi perangkat lain telah dicabut.");
+                }}
+              >
+                <Field label="Username baru" hint="3–32 huruf, angka, atau garis bawah. Perangkat lain akan keluar setelah username berubah.">
+                  <input
+                    name="username"
+                    defaultValue={me.user?.username}
+                    pattern="[a-zA-Z0-9_]{3,32}"
+                    minLength={3}
+                    maxLength={32}
+                    required
+                    autoComplete="username"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                  />
+                </Field>
+                <Field label="Password saat ini">
+                  <input name="current" type="password" autoComplete="current-password" required maxLength={128} />
+                </Field>
+              </ActionForm>
             </section>
           )}
           {active === "keamanan" && (
@@ -292,7 +352,7 @@ export function AccountSettings() {
               </button>
             </section>
           )}
-          {me.user?.role === "seller" && !forced && ["pengiriman", "pembayaran"].includes(active) && (
+          {((active === "pengiriman" && isOperator(me.user?.role)) || (active === "pembayaran" && me.user?.role === "owner")) && (
             <StoreSettings key={active} section={active} saved={() => setDirty(false)} markDirty={() => setDirty(true)} />
           )}
         </div>

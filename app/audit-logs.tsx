@@ -1,6 +1,6 @@
 "use client";
 import React, { useState } from "react";
-import { date } from "../lib/types";
+import { date, roleLabel } from "../lib/types";
 import { auditLabels } from "../lib/audit-labels";
 import { useData, Field, ErrorBox, Loading, Empty, Pagination } from "./ui";
 type Entry = {
@@ -25,6 +25,8 @@ const fieldLabels: Record<string, string> = {
   price: "Harga",
   stock: "Stok",
   photo_id: "Foto",
+  photo_ids: "Foto barang",
+  expires_at: "Berlaku sampai",
   archived: "Diarsipkan",
   shipping_fee: "Ongkir",
   bank_name: "Bank",
@@ -49,7 +51,15 @@ function Values({ value }: { value: unknown }) {
       {Object.entries(value).map(([key, v]) => (
         <div key={key}>
           <dt>{fieldLabels[key] || key}</dt>
-          <dd>{key === "deleted_at" && typeof v === "number" ? date(v) : v === null ? "—" : String(v)}</dd>
+          <dd>
+            {key === "deleted_at" && typeof v === "number"
+              ? date(v)
+              : v === null
+                ? "—"
+                : key === "role" && typeof v === "string" && v in roleLabel
+                  ? roleLabel[v as keyof typeof roleLabel]
+                  : String(v)}
+          </dd>
         </div>
       ))}
     </dl>

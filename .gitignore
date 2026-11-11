@@ -12,5 +12,6 @@ next-env.d.ts
 !.dev.vars.example
 !.env.example
 .seller-credentials*.txt
+.owner-credentials*.txt
 .test-artifacts/
 *.tsbuildinfo

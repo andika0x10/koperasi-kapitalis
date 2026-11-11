@@ -9,7 +9,7 @@ export async function authenticate(request: Request, env: Env, required = true):
   }
   const now = Date.now();
   const auth = await env.DB.prepare(
-    `SELECT u.id,u.username,u.role,u.must_change_password,s.id AS session_id,s.csrf FROM sessions s JOIN users u ON u.id=s.user_id WHERE u.deleted_at IS NULL AND s.token_hash=? AND s.expires_at>? AND s.last_seen>?`
+    `SELECT u.id,u.username,u.role,u.status,s.id AS session_id,s.csrf FROM sessions s JOIN users u ON u.id=s.user_id WHERE u.status='active' AND s.token_hash=? AND s.expires_at>? AND s.last_seen>?`
   )
     .bind(await digest(token), now, now - 7 * DAY)
     .first<Auth>();
@@ -24,10 +24,10 @@ export function csrf(request: Request, auth: Auth) {
   if (request.headers.get("x-csrf-token") !== auth.csrf) throw new HttpError(403, "Sesi formulir tidak valid. Muat ulang halaman.");
 }
 export function unlocked(auth: Auth) {
-  if (auth.must_change_password) throw new HttpError(403, "Ganti password sementara di Pengaturan terlebih dahulu.");
+  if (auth.status !== "active") throw new HttpError(403, "Atur password melalui link dari owner terlebih dahulu.");
 }
-export function role(auth: Auth, value: "seller" | "buyer") {
-  if (auth.role !== value) throw new HttpError(403, "Anda tidak memiliki akses.");
+export function role(auth: Auth, ...values: import("./types").Role[]) {
+  if (!values.includes(auth.role)) throw new HttpError(403, "Anda tidak memiliki akses.");
 }
 export function sessionCookie(token: string, request: Request, maxAge = 30 * 86400) {
   return `kk_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${new URL(request.url).protocol === "https:" ? "; Secure" : ""}`;

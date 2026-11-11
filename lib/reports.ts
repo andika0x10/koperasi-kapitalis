@@ -31,6 +31,17 @@ export async function salesReport(db: D1Database, url: URL): Promise<SalesReport
     db
       .prepare(`SELECT id,recipient,status,decided_at,subtotal,shipping_fee,total FROM orders WHERE ${where} ORDER BY decided_at DESC,id DESC LIMIT 30 OFFSET ?`)
       .bind(start, end, rawPage * 30),
+    db.prepare("SELECT status,COUNT(*) count FROM orders GROUP BY status"),
+    db.prepare("SELECT id,name,stock,unit FROM products WHERE stock=0 ORDER BY name"),
+    db.prepare("SELECT id,name,stock,unit FROM products WHERE stock BETWEEN 1 AND 5 ORDER BY stock,name"),
+    db.prepare("SELECT role,status,COUNT(*) count FROM users GROUP BY role,status"),
   ]);
-  return { summary: results[0].results[0], daily: results[1].results, products: results[2].results, transactions: results[3].results, page: rawPage } as unknown as SalesReportData;
+  return {
+    summary: results[0].results[0],
+    daily: results[1].results,
+    products: results[2].results,
+    transactions: results[3].results,
+    page: rawPage,
+    operations: { orders: results[4].results, out_of_stock: results[5].results, low_stock: results[6].results, accounts: results[7].results },
+  } as unknown as SalesReportData;
 }

@@ -18,8 +18,8 @@ export async function hashPassword(password: string, salt = random()) {
   );
   return `scrypt:16384:8:5:${salt}:${bytesToHex(hash)}`;
 }
-export async function verifyPassword(password: string, stored: string) {
-  if (!stored.startsWith("scrypt:16384:8:5:")) return false;
+export async function verifyPassword(password: string, stored: string | null) {
+  if (!stored?.startsWith("scrypt:16384:8:5:")) return false;
   return same(await hashPassword(password, stored.split(":")[4]), stored);
 }
 export function validPassword(value: unknown): asserts value is string {
