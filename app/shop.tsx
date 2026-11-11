@@ -57,7 +57,7 @@ export function Catalog() {
     }
   }
   return (
-    <>
+    <div className="catalog-page">
       {gallery && <ProductGallery name={gallery.name} photos={gallery.photo_ids} onClose={() => setGallery(null)} />}
       <div className="page-heading catalog-heading">
         <div>
@@ -165,7 +165,7 @@ export function Catalog() {
       <Overlay open={cartOpen} onClose={() => setCartOpen(false)} title="Keranjang Anda" className="cart-overlay">
         <Cart cart={cart.data || []} error={cart.error} loading={cart.loading} compact onClose={() => setCartOpen(false)} />
       </Overlay>
-    </>
+    </div>
   );
 }
 function Cart({ cart, error, loading, compact = false, onClose }: { cart: CartItem[]; error?: string; loading?: boolean; compact?: boolean; onClose?: () => void }) {

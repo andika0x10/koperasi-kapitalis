@@ -43,7 +43,13 @@ export function useData<T>(url: string | null) {
   }, [url, version, api]);
   return { data, error, loading };
 }
-export function Icon({ name, size = 22 }: { name: "bag" | "search" | "plus" | "minus" | "box" | "close" | "arrow" | "clock" | "user" | "menu"; size?: number }) {
+export function Icon({
+  name,
+  size = 22,
+}: {
+  name: "bag" | "search" | "plus" | "minus" | "box" | "close" | "arrow" | "clock" | "user" | "menu" | "settings" | "logout";
+  size?: number;
+}) {
   const paths = {
     bag: (
       <>
@@ -68,6 +74,13 @@ export function Icon({ name, size = 22 }: { name: "bag" | "search" | "plus" | "m
     ),
     close: <path d="m6 6 12 12M18 6 6 18" />,
     arrow: <path d="m9 5 7 7-7 7" />,
+    logout: <path d="M9 4H4v16h5M9 12h12m-5-5 5 5-5 5" />,
+    settings: (
+      <>
+        <path d="m9 3-1 3-3 1-2 5 2 5 3 1 1 3h6l1-3 3-1 2-5-2-5-3-1-1-3Z" />
+        <circle cx="12" cy="12" r="3" />
+      </>
+    ),
     clock: (
       <>
         <circle cx="12" cy="12" r="9" />

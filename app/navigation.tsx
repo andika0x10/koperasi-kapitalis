@@ -37,13 +37,13 @@ export function Navigation({ path, logout }: { path: string; logout: () => Promi
     };
   }, [account]);
   useEffect(() => {
-    const query = matchMedia("(min-width: 850px)");
+    const query = matchMedia(operator ? "(min-width: 1150px)" : "(min-width: 850px)");
     const change = () => {
       if (query.matches) setMobile(false);
     };
     query.addEventListener("change", change);
     return () => query.removeEventListener("change", change);
-  }, []);
+  }, [operator]);
   const links = operator
     ? [
         ...(me.user?.role === "owner" ? [["/owner/statistik", "Statistik"]] : []),
@@ -55,7 +55,6 @@ export function Navigation({ path, logout }: { path: string; logout: () => Promi
               ["/owner/log-aktivitas", "Log aktivitas"],
             ]
           : []),
-        ["/pengaturan", "Pengaturan"],
       ]
     : [["/", "Produk"], ["/keranjang", "Keranjang"], ...(me.user ? [["/pesanan", "Pesanan saya"]] : [])];
   const nav = (
@@ -107,6 +106,40 @@ export function Navigation({ path, logout }: { path: string; logout: () => Promi
       </Link>
     </>
   );
+  const managementNavigation = (
+    <div className="management-navigation">
+      <p className="sidebar-identity">{me.user?.role === "owner" ? "Kelola toko" : "Operasional toko"}</p>
+      {nav}
+      <Link className="sidebar-catalog" href="/" aria-current={path === "/" ? "page" : undefined} onClick={() => setMobile(false)}>
+        Lihat katalog
+      </Link>
+      <div className="sidebar-account" aria-label="Akun Anda">
+        <div className="sidebar-account-identity">
+          <span className="sidebar-avatar" aria-hidden="true">
+            {me.user?.username.slice(0, 1).toUpperCase()}
+          </span>
+          <div>
+            <strong>{me.user?.username}</strong>
+            <small>{me.user ? roleLabel[me.user.role] : ""}</small>
+          </div>
+        </div>
+        <Link className="sidebar-account-action" href="/pengaturan" aria-current={path === "/pengaturan" ? "page" : undefined} onClick={() => setMobile(false)}>
+          <Icon name="settings" size={18} />
+          <span>Pengaturan</span>
+        </Link>
+        <button
+          className="sidebar-account-action"
+          onClick={() => {
+            setMobile(false);
+            void logout();
+          }}
+        >
+          <Icon name="logout" size={18} />
+          <span>Keluar</span>
+        </button>
+      </div>
+    </div>
+  );
   return (
     <header className="header">
       <div className="header-inner">
@@ -129,48 +162,41 @@ export function Navigation({ path, logout }: { path: string; logout: () => Promi
               <span>{cart.error ? "!" : count}</span>
             </Link>
           )}
-          <div className="account-menu" ref={accountRef}>
-            {me.user ? (
-              <>
-                <button ref={trigger} className="account-trigger" aria-expanded={account} aria-controls="account-menu" onClick={() => setAccount(!account)}>
-                  <Icon name="user" />
-                  <span>{me.user.username}</span>
-                </button>
-                {account && (
-                  <div id="account-menu" className="account-dropdown">
-                    {accountLinks}
-                  </div>
-                )}
-              </>
-            ) : (
-              accountLinks
-            )}
-          </div>
+          {!operator && (
+            <div className="account-menu" ref={accountRef}>
+              {me.user ? (
+                <>
+                  <button ref={trigger} className="account-trigger" aria-expanded={account} aria-controls="account-menu" onClick={() => setAccount(!account)}>
+                    <Icon name="user" />
+                    <span>{me.user.username}</span>
+                  </button>
+                  {account && (
+                    <div id="account-menu" className="account-dropdown">
+                      {accountLinks}
+                    </div>
+                  )}
+                </>
+              ) : (
+                accountLinks
+              )}
+            </div>
+          )}
           <button className="menu-toggle icon-button" aria-label="Buka menu navigasi" aria-expanded={mobile} aria-controls="mobile-menu" onClick={() => setMobile(true)}>
             <Icon name="menu" />
           </button>
         </div>
       </div>
-      {operator && (
-        <aside className="management-sidebar">
-          <p className="sidebar-identity">{me.user?.role === "owner" ? "Kelola toko" : "Operasional toko"}</p>
-          {nav}
-          <Link className="sidebar-catalog" href="/">
-            Lihat katalog
-          </Link>
-          <div className="sidebar-account">
-            <strong>{me.user?.username}</strong>
-            <small>{me.user ? roleLabel[me.user.role] : ""}</small>
-            <button className="text-button" onClick={() => void logout()}>
-              Keluar
-            </button>
-          </div>
-        </aside>
-      )}
+      {operator && <aside className="management-sidebar">{managementNavigation}</aside>}
       <Overlay open={mobile} onClose={() => setMobile(false)} title="Menu" className="navigation-overlay">
         <div id="mobile-menu">
-          {nav}
-          <div className="mobile-account">{accountLinks}</div>
+          {operator ? (
+            managementNavigation
+          ) : (
+            <>
+              {nav}
+              <div className="mobile-account">{accountLinks}</div>
+            </>
+          )}
         </div>
       </Overlay>
     </header>

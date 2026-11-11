@@ -124,4 +124,8 @@ Integrasi memakai Workers, D1, dan Durable Objects di Miniflare terisolasi. Caku
 
 Playwright mengintersep API sehingga tidak mengubah data toko. Responsivitas diperiksa dari 320–1440 px untuk publik/pelanggan/staf/owner, termasuk nama panjang, nominal besar, kondisi loading/error/kosong, dialog, fokus keyboard, reduced motion, galeri, serta link password. Screenshot dan trace tersimpan di `.test-artifacts/ui/`.
 
+Tes katalog tambahan mencakup 320–1920 px, satu/banyak produk, foto portrait/landscape/persegi, tanpa foto, stok habis, serta navigasi saat resize. Tes memeriksa proporsi foto, batas lebar konten staf/owner, dan membandingkan screenshot pada 390, 1440, dan 1920 px dengan baseline di `tests/ui/catalog.spec.ts-snapshots/`. Baseline yang disertakan memakai Chromium di Windows; platform lain memerlukan baseline sendiri karena rendering font dapat berbeda.
+
+Jalankan `npx playwright test tests/ui/catalog.spec.ts` untuk pemeriksaan katalog saja. Setelah perubahan visual yang disengaja, tinjau hasil screenshot terlebih dahulu, lalu perbarui baseline dengan `npx playwright test tests/ui/catalog.spec.ts --update-snapshots=all`. Jalankan kembali tanpa opsi update untuk memastikan perbandingan lulus.
+
 Di luar cakupan: email, promo, pembayaran otomatis, integrasi kurir, refund, retur, dan ekspor laporan.

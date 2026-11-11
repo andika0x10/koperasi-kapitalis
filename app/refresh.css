@@ -103,7 +103,19 @@ select {
   width: 100%;
   height: 100%;
   padding: 0;
-  position: relative;
+  position: absolute;
+  inset: 0;
+}
+.product-photo > .photo-placeholder {
+  position: absolute;
+  inset: 0;
+}
+.catalog-page .search button {
+  min-width: 44px;
+  min-height: 44px;
+}
+.catalog-page .add-button {
+  min-height: 44px;
 }
 .product-gallery-trigger:focus-visible {
   outline-offset: -5px;
@@ -491,8 +503,15 @@ tbody td {
 .management-site .catalog-layout {
   grid-template-columns: minmax(0, 1fr);
 }
-.management-site .product-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+.management-site .catalog-page {
+  width: 100%;
+  max-width: 1200px;
+}
+@media (min-width: 850px) {
+  .management-site .product-grid {
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    column-gap: 20px;
+  }
 }
 .management-site .header .primary-navigation .nav-link {
   height: auto;
@@ -514,53 +533,132 @@ tbody td {
     border-right: 1px solid var(--line);
     overflow-y: auto;
   }
-  .sidebar-identity {
-    font-size: 14px;
-    font-weight: 700;
-    padding: 0 16px;
-    margin-bottom: 20px;
+}
+.management-navigation {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+.sidebar-identity {
+  font-size: 14px;
+  font-weight: 700;
+  padding: 0 16px;
+  margin-bottom: 20px;
+}
+.management-navigation .primary-navigation {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: stretch;
+  height: auto;
+  width: auto;
+  margin: 0;
+  overflow: visible;
+  order: 0;
+  flex-shrink: 0;
+}
+.management-navigation .primary-navigation .nav-link {
+  font-size: 14px;
+  min-height: 44px;
+  padding: 10px 16px;
+  border-radius: 6px;
+  white-space: normal;
+}
+.management-navigation .primary-navigation .nav-link.active {
+  background: white;
+  border-left: 3px solid var(--orange);
+  padding-left: 13px;
+}
+.management-navigation .nav-link:after {
+  display: none;
+}
+.sidebar-catalog {
+  font-size: 14px;
+  padding: 20px 16px;
+}
+.sidebar-account {
+  margin-top: auto;
+  border-top: 1px solid var(--line);
+  padding: 20px 0 0;
+  overflow-wrap: anywhere;
+}
+.sidebar-account-identity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 12px 16px;
+}
+.sidebar-account-identity > div {
+  min-width: 0;
+}
+.sidebar-avatar {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: #fff2e4;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 700;
+}
+.sidebar-account strong {
+  font-size: 14px;
+}
+.sidebar-account small {
+  font-size: 12px;
+}
+.sidebar-account-action {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-size: 14px;
+  text-align: left;
+  text-decoration: none;
+}
+.sidebar-account-action svg {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.sidebar-account-action:hover,
+.sidebar-account-action[aria-current="page"] {
+  background: #fff;
+}
+.sidebar-account-action[aria-current="page"] {
+  font-weight: 700;
+}
+@media (max-width: 1149px) {
+  .management-site .navigation-overlay {
+    margin: 0 0 0 auto;
+    width: min(360px, calc(100% - 32px));
+    height: 100dvh;
+    max-height: 100dvh;
+    border-radius: 0;
+    border: 0;
+    background: var(--surface);
   }
-  .management-sidebar .primary-navigation {
+  .management-site .navigation-overlay .overlay-content {
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    align-items: stretch;
-  }
-  .management-sidebar .nav-link {
-    font-size: 14px;
-    min-height: 44px;
-    padding: 10px 16px;
-    border-radius: 6px;
-    white-space: normal;
-  }
-  .management-sidebar .nav-link.active {
-    background: white;
-    border-left: 3px solid var(--orange);
-    padding-left: 13px;
-  }
-  .management-sidebar .nav-link:after {
-    display: none;
-  }
-  .sidebar-catalog {
-    font-size: 14px;
+    min-height: 100%;
     padding: 20px 16px;
   }
-  .sidebar-account {
+  .management-site #mobile-menu {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+  }
+  .management-site .navigation-overlay .sidebar-account {
     margin-top: auto;
-    border-top: 1px solid var(--line);
-    padding: 20px 16px 0;
-    overflow-wrap: anywhere;
   }
-  .sidebar-account strong {
-    font-size: 14px;
-  }
-  .sidebar-account small {
-    font-size: 12px;
-  }
-  .sidebar-account button {
-    font-size: 14px;
-    padding: 0;
-  }
+}
+@media (min-width: 1150px) {
   .management-site .main {
     margin-left: 232px;
     width: calc(100% - 232px);
