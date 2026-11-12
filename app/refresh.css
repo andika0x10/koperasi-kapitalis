@@ -1,4 +1,132 @@
 /* Storefront and operations share materials, but have distinct navigation. */
+.location-picker {
+  display: grid;
+  gap: 12px;
+  margin: 20px 0;
+  min-width: 0;
+}
+.place-search {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.place-search > label {
+  font-weight: 600;
+  font-size: 14px;
+}
+.place-search-input {
+  display: flex;
+  gap: 8px;
+}
+.place-search-input input {
+  flex: 1;
+  width: 0;
+  min-width: 0;
+}
+.place-search-input button {
+  flex-shrink: 0;
+}
+.place-search-results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.place-search-results li + li {
+  border-top: 1px solid var(--line);
+}
+.place-search-results button {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  padding: 12px;
+  border: 0;
+  background: white;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.place-search-results button:hover {
+  background: var(--surface);
+}
+.place-search-results span {
+  color: var(--muted);
+  font-size: 14px;
+}
+.location-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.location-toolbar .button {
+  font-size: 14px;
+}
+.location-map {
+  height: 300px;
+  width: 100%;
+  z-index: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  font-family: inherit;
+}
+.location-map .leaflet-control-attribution a {
+  color: #175c83;
+}
+.coordinate-fields label {
+  display: grid;
+  gap: 6px;
+  font-size: 14px;
+  min-width: 0;
+}
+.coordinate-fields input {
+  width: 100%;
+  min-width: 0;
+}
+.map-external {
+  justify-self: start;
+  font-weight: 600;
+}
+.delivery-map-pin {
+  background: transparent;
+  border: 0;
+}
+.delivery-map-pin span {
+  display: block;
+  width: 26px;
+  height: 26px;
+  border: 3px solid #fff;
+  background: var(--orange);
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+  box-shadow: 0 2px 5px #0005;
+}
+.delivery-map-pin:focus-visible {
+  outline: 3px solid var(--ink);
+  outline-offset: 4px;
+}
+.receipt-lines > .shipping-calculation {
+  display: block;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.6;
+}
+.receipt-lines > .shipping-calculation > span {
+  text-align: left;
+}
+@media (max-width: 849px) {
+  .checkout-layout .receipt {
+    order: 0;
+  }
+}
+@media (max-width: 600px) {
+  .location-map {
+    height: 260px;
+  }
+}
 :root {
   --danger: #b42318;
 }

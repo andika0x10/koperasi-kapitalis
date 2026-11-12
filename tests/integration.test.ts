@@ -6,6 +6,7 @@ import { build } from "esbuild";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
 import { hashPassword, digest } from "../lib/security";
 let mf: Miniflare, db: D1Database;
+let geocodingRequests = 0;
 const base = "https://koperasi.test",
   password = "test-password-123";
 type Client = { cookie: string; csrf: string; id: string };
@@ -44,6 +45,8 @@ async function checkout(client: Client, key = crypto.randomUUID(), expected_tota
     recipient: "Penerima uji",
     phone: "081234567890",
     address: "Jalan Pengujian 1, Jakarta, 12345",
+    latitude: -6.2,
+    longitude: 106.8,
     payment_method: "bank",
     expected_total,
   });
@@ -55,6 +58,71 @@ async function stock(id: string) {
   return (await db.prepare("SELECT stock FROM products WHERE id=?").bind(id).first<{ stock: number }>())!.stock;
 }
 const png = new Uint8Array(Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a8m8AAAAASUVORK5CYII=", "base64"));
+test("delivery profile, authoritative quotes, atomic checkout and frozen location snapshots", async () => {
+  const initial = await ok(await req(owner, "/api/settings"));
+  const { client } = await managed();
+  const { client: other } = await managed();
+  const saved = { full_name: "Nama awal", whatsapp: "081234567890", address: "Jalan awal, Jakarta 12345", latitude: -6.2, longitude: 106.8 };
+  const delivery = { ...saved, full_name: "Nama terbaru", address: "Jalan baru, Jakarta 12345", latitude: -6.22 };
+  const body = {
+    key: crypto.randomUUID(),
+    recipient: delivery.full_name,
+    phone: delivery.whatsapp,
+    address: delivery.address,
+    latitude: delivery.latitude,
+    longitude: delivery.longitude,
+    payment_method: "bank",
+    expected_total: 16000,
+  };
+  try {
+    await cleanCart();
+    await ok(await req(client, "/api/profile", "PUT", saved));
+    assert.equal((await ok(await req(client, "/api/profile"))).whatsapp, "+6281234567890");
+    assert.equal((await ok(await req(other, "/api/profile"))).full_name, "");
+    await ok(await req(owner, "/api/profile"), 403);
+    await ok(await req(other, "/api/profile", "PUT", { ...saved, latitude: 91 }), 400);
+    await ok(await req(owner, "/api/settings", "PUT", { shipping_mode: "dynamic" }), 400);
+    const config = { shipping_mode: "dynamic", store_latitude: -6.2, store_longitude: 106.8, rate_per_km: 2000, max_distance_km: 10 };
+    await ok(await req(owner, "/api/settings", "PUT", config));
+    const quote = await ok(await req(client, "/api/shipping/quote", "POST", delivery));
+    assert.equal(quote.billable_km, 3);
+    assert.equal(quote.shipping_fee, 6000);
+    await ok(await req(client, "/api/shipping/quote", "POST", { latitude: -7, longitude: 106.8 }), 400);
+    await ok(await req(client, "/api/shipping/quote", "POST", {}), 400);
+    const p = await product(5);
+    await cart(client, p);
+    await ok(await req(client, "/api/checkout", "POST", { ...body, expected_total: 1, shipping_fee: 0 }), 409);
+    assert.equal((await ok(await req(client, "/api/profile"))).full_name, saved.full_name);
+    await db.prepare("CREATE TRIGGER test_delivery_failure BEFORE INSERT ON order_items BEGIN SELECT RAISE(ABORT,'TEST_DELIVERY_FAILURE'); END;").run();
+    try {
+      await ok(await req(client, "/api/checkout", "POST", body), 500);
+    } finally {
+      await db.prepare("DROP TRIGGER test_delivery_failure").run();
+    }
+    assert.equal((await ok(await req(client, "/api/profile"))).full_name, saved.full_name);
+    assert.equal(await stock(p), 5);
+    assert.equal(await db.prepare("SELECT id FROM orders WHERE checkout_key=?").bind(body.key).first(), null);
+    const created = await ok(await req(client, "/api/checkout", "POST", body), 201);
+    const updated = await ok(await req(client, "/api/profile"));
+    assert.equal(updated.full_name, delivery.full_name);
+    assert.equal(updated.latitude, delivery.latitude);
+    await ok(await req(client, "/api/profile", "PUT", saved));
+    const retry = await ok(await req(client, "/api/checkout", "POST", body));
+    assert.equal(retry.id, created.id);
+    assert.equal((await ok(await req(client, "/api/profile"))).full_name, saved.full_name);
+    await ok(await req(owner, "/api/settings", "PUT", { rate_per_km: 3000, store_latitude: -6.19 }));
+    const order = await ok(await req(client, "/api/orders/" + created.id));
+    assert.equal(order.latitude, delivery.latitude);
+    assert.equal(order.phone, "+6281234567890");
+    assert.equal(order.shipping_fee, 6000);
+    assert.equal(JSON.parse(order.shipping_snapshot).origin.latitude, -6.2);
+    assert.equal(JSON.parse(order.shipping_snapshot).rate_per_km, 2000);
+    await ok(await req(other, "/api/orders/" + created.id), 404);
+  } finally {
+    await ok(await req(owner, "/api/settings", "PUT", initial));
+    await cleanCart();
+  }
+});
 before(async () => {
   mkdirSync(".test-artifacts", { recursive: true });
   await build({
@@ -73,6 +141,13 @@ before(async () => {
       compatibilityDate: "2026-11-08",
       compatibilityFlags: ["nodejs_compat"],
       d1Databases: { DB: "test-db" },
+      outboundService: async (request) => {
+        assert.equal(new URL(request.url).hostname, "photon.komoot.io");
+        geocodingRequests++;
+        return Response.json({
+          features: [{ geometry: { type: "Point", coordinates: [106.83, -6.28] }, properties: { name: "Pasar Minggu", city: "Jakarta", country: "Indonesia" } }],
+        });
+      },
       durableObjects: { COMMERCE: { className: "Commerce", useSQLite: true }, LIMITER: { className: "RateLimiter", useSQLite: true } },
     })
   );
@@ -110,6 +185,19 @@ before(async () => {
 });
 after(async () => {
   await mf?.dispose();
+});
+test("address search authenticates, validates, caches results and throttles global misses", async () => {
+  await ok(await req(null, "/api/places?q=Pasar%20Minggu"), 401);
+  await ok(await req(staff, "/api/places?q=Pasar%20Minggu"), 403);
+  await ok(await req(a, "/api/places?q=ab"), 400);
+  const found = await ok(await req(a, "/api/places?q=Pasar%20Minggu"));
+  assert.deepEqual(found, [{ name: "Pasar Minggu", address: "Pasar Minggu, Jakarta, Indonesia", latitude: -6.28, longitude: 106.83 }]);
+  assert.equal(geocodingRequests, 1);
+  const cached = await ok(await req(owner, "/api/places?q=pasar%20%20minggu"));
+  assert.deepEqual(cached, found);
+  assert.equal(geocodingRequests, 1);
+  await ok(await req(b, "/api/places?q=Monas%20Jakarta"), 429);
+  assert.equal(geocodingRequests, 1);
 });
 test("public catalog, registration, role enforcement, CSRF and username uniqueness", async () => {
   await ok(await req(null, "/api/products"));
@@ -469,9 +557,9 @@ test("multiple staff, owner-only management, immutable roles and restricted paym
   await ok(await req(client, "/api/users", "POST", { username: "illegal_user", role: "buyer" }), 403);
   await ok(await req(client, "/api/users/" + owner.id + "/reset", "POST", {}), 403);
   await ok(await req(client, "/api/users/" + owner.id, "DELETE"), 403);
-  await ok(await req(client, "/api/settings", "PUT", { shipping_fee: 2000 }));
+  await ok(await req(client, "/api/settings", "PUT", { shipping_fee: 2000 }), 403);
   await ok(await req(client, "/api/settings", "PUT", { shipping_fee: 3000, bank_name: "Bad" }), 403);
-  assert.equal((await ok(await req(owner, "/api/settings"))).shipping_fee, 2000);
+  assert.equal((await ok(await req(owner, "/api/settings"))).shipping_fee, 1000);
   await ok(await req(client, "/api/attachments?kind=qris", "POST", png), 403);
   await ok(await req(owner, "/api/settings", "PUT", { shipping_fee: 1000 }));
   await assert.rejects(() => db.prepare("UPDATE users SET role='owner' WHERE id=?").bind(client.id).run(), /ROLE_CANNOT_BE_CHANGED/);

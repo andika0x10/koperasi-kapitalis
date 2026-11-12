@@ -31,7 +31,7 @@ test("D1 forward migration preserves populated history and atomically refuses ar
   try {
     const db = await mf.getD1Database("DB");
     for (const file of readdirSync("migrations")
-      .filter((f) => f.endsWith(".sql") && !f.startsWith("0005"))
+      .filter((f) => f.endsWith(".sql") && f < "0005")
       .sort()) {
       await db.batch(statements(readFileSync("migrations/" + file, "utf8")).map((sql) => db.prepare(sql)));
     }
@@ -86,6 +86,15 @@ test("D1 forward migration preserves populated history and atomically refuses ar
     assert.equal(await db.prepare("SELECT id FROM products WHERE id='archived'").first(), null);
     assert.equal(await db.prepare("SELECT id FROM attachments WHERE id='archived-photo'").first(), null);
     assert.equal(await db.prepare("SELECT name FROM order_items WHERE id='item'").first("name"), "Minyak snapshot");
+    await db.batch(statements(readFileSync("migrations/0006_delivery.sql", "utf8")).map((sql) => db.prepare(sql)));
+    assert.deepEqual(await db.prepare("SELECT total,latitude,longitude,shipping_snapshot FROM orders WHERE id='order'").first(), {
+      total: 16000,
+      latitude: null,
+      longitude: null,
+      shipping_snapshot: null,
+    });
+    assert.equal(await db.prepare("SELECT shipping_mode FROM settings WHERE id=1").first("shipping_mode"), "fixed");
+    assert.equal((await db.prepare("SELECT * FROM delivery_profiles").all()).results.length, 0);
     assert.deepEqual(await db.prepare("SELECT attachment_id,position FROM product_photos WHERE product_id='live'").first(), { attachment_id: "photo", position: 0 });
     assert.deepEqual((await db.prepare("PRAGMA foreign_key_check").all()).results, []);
   } finally {

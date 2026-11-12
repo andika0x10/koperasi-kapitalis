@@ -26,6 +26,7 @@ export const auditLabels: Record<string, string> = {
   product_created: "Produk dibuat",
   product_updated: "Produk diubah",
   settings_updated: "Pengaturan toko diubah",
+  profile_updated: "Profil pengiriman diubah",
   approved: "Pembayaran disetujui",
   rejected: "Pembayaran ditolak",
   shipped: "Pesanan dikirim",

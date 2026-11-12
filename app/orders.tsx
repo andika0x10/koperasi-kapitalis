@@ -1,4 +1,5 @@
 "use client";
+import { LocationMap } from "./location-map";
 import { isOperator } from "../lib/types";
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
@@ -245,6 +246,7 @@ export function OrderDetail({ id }: { id: string }) {
             <strong>{o.recipient}</strong>
             <p>{o.phone}</p>
             <p className="preserve">{o.address}</p>
+            {o.latitude != null && o.longitude != null && <LocationMap value={{ latitude: o.latitude, longitude: o.longitude }} />}
           </section>
           {(o.status === "pending" || o.proof_id) && (
             <section className="detail-section">

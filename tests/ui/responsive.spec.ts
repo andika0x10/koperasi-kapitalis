@@ -70,6 +70,7 @@ async function fixture(page: Page, role: "public" | "buyer" | "owner" | "staff",
       if (request.method() === "PUT") quantity = request.postDataJSON().quantity;
       data = state === "empty" || !quantity ? [] : [{ ...product, quantity }];
     } else if (path === "/api/settings") data = settings;
+    else if (path === "/api/profile") data = { full_name: "", whatsapp: "", address: "", latitude: null, longitude: null };
     else if (path === "/api/orders") data = state === "empty" ? [] : rows;
     else if (path.startsWith("/api/orders/")) data = order;
     else if (path === "/api/sessions") data = [{ id: "session", device: "Mozilla/5.0 (Linux; Android 15) Chrome/130", current: true, created_at: now, last_seen: now }];
@@ -165,7 +166,7 @@ for (const width of widths) {
         role === "public"
           ? ["/", "/masuk", "/daftar"]
           : role === "buyer"
-            ? ["/", "/keranjang", "/checkout", "/pesanan", "/pesanan/order-ui", "/pengaturan#akun", "/pengaturan#keamanan", "/pengaturan#perangkat"]
+            ? ["/", "/keranjang", "/checkout", "/pesanan", "/pesanan/order-ui", "/pengaturan#akun", "/pengaturan#profil", "/pengaturan#keamanan", "/pengaturan#perangkat"]
             : [
                 "/",
                 "/kelola/pesanan",

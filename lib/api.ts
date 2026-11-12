@@ -1,11 +1,14 @@
 import type { Env } from "./env";
-import { authenticate, role, unlocked } from "./auth";
+import { authenticate, role, unlocked, limit } from "./auth";
 import { json, failure } from "./http";
-import { HttpError } from "./security";
+import { HttpError, text } from "./security";
+import { findPlaces } from "./geocoding";
+import { placeSearchUrl } from "./map-config";
 import { auditLogs, pageNumber } from "./audit";
 import { salesReport, purchaseReport } from "./reports";
 import type { Order } from "./types";
 import { productPhotos } from "./products";
+import { emptyProfile } from "./delivery";
 
 export async function api(request: Request, env: Env): Promise<Response> {
   try {
@@ -70,6 +73,27 @@ export async function api(request: Request, env: Env): Promise<Response> {
       return json(sessions.results.map((s) => ({ ...s, current: s.id === auth.session_id })));
     }
     unlocked(auth);
+    if (path === "/api/places" && method === "GET") {
+      role(auth, "buyer", "owner");
+      const query = text(url.searchParams.get("q"), "Alamat pencarian", 200, 3).replace(/\s+/g, " ");
+      await limit(env, `place-search:${auth.id}`, 10, 60000);
+      const endpoint = env.GEOCODING_URL || placeSearchUrl;
+      const cacheUrl = new URL("/__place_cache", url.origin);
+      cacheUrl.searchParams.set("q", query.toLowerCase());
+      cacheUrl.searchParams.set("provider", endpoint);
+      const cacheKey = new Request(cacheUrl.toString());
+      const cache = await caches.open("place-search");
+      const cached = await cache.match(cacheKey);
+      if (cached) return json(await cached.json());
+      await limit(env, "place-search:global", 1, 1100);
+      const results = await findPlaces(query, endpoint);
+      await cache.put(cacheKey, Response.json(results, { headers: { "Cache-Control": "public, max-age=86400" } }));
+      return json(results);
+    }
+    if (path === "/api/profile") {
+      role(auth, "buyer");
+      return json((await db.prepare("SELECT full_name,whatsapp,address,latitude,longitude FROM delivery_profiles WHERE user_id=?").bind(auth.id).first()) || emptyProfile);
+    }
     if (path === "/api/reports/sales") {
       role(auth, "owner");
       const expired = await env.COMMERCE.get(env.COMMERCE.idFromName("store")).fetch("https://internal/internal/expire");

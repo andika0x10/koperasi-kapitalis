@@ -2,9 +2,10 @@
 import React, { useEffect, useState, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import type { Settings, Session } from "../lib/types";
-import { date, isOperator, roleLabel } from "../lib/types";
+import type { Settings, Session, DeliveryProfile, Coordinates } from "../lib/types";
+import { date, roleLabel } from "../lib/types";
 import { useApp, useData, Icon, ErrorBox, Loading, Field, ActionForm, PhotoUpload } from "./ui";
+import { LocationMap } from "./location-map";
 export function AuthPage({ register }: { register: boolean }) {
   const { api, refresh, me, notify } = useApp(),
     router = useRouter();
@@ -149,9 +150,10 @@ export function AccountSettings() {
   navigationState.current = { section, dirty };
   const sections = [
     ["akun", "Akun"],
+    ...(me.user?.role === "buyer" ? [["profil", "Profil pengiriman"]] : []),
     ["keamanan", "Keamanan"],
     ["perangkat", "Perangkat"],
-    ...(isOperator(me.user?.role) ? [["pengiriman", "Pengiriman"]] : []),
+    ...(me.user?.role === "owner" ? [["pengiriman", "Pengiriman"]] : []),
     ...(me.user?.role === "owner" ? [["pembayaran", "Pembayaran"]] : []),
   ];
   useEffect(() => {
@@ -204,7 +206,7 @@ export function AccountSettings() {
       <div className="page-heading">
         <div>
           <h1>Pengaturan</h1>
-          <p>Kelola password dan perangkat yang memiliki akses.</p>
+          <p>Kelola data akun, pengiriman, dan perangkat yang memiliki akses.</p>
         </div>
       </div>
       <div className="settings-shell">
@@ -224,7 +226,8 @@ export function AccountSettings() {
             ))}
           </select>
         </aside>
-        <div className="settings-content" onInputCapture={() => setDirty(true)}>
+        <div className="settings-content" onChange={() => setDirty(true)}>
+          {active === "profil" && me.user?.role === "buyer" && <DeliverySettings saved={() => setDirty(false)} markDirty={() => setDirty(true)} />}
           {active === "akun" && (
             <section className="detail-section">
               <h2>Akun</h2>
@@ -352,7 +355,7 @@ export function AccountSettings() {
               </button>
             </section>
           )}
-          {((active === "pengiriman" && isOperator(me.user?.role)) || (active === "pembayaran" && me.user?.role === "owner")) && (
+          {(active === "pengiriman" || active === "pembayaran") && me.user?.role === "owner" && (
             <StoreSettings key={active} section={active} saved={() => setDirty(false)} markDirty={() => setDirty(true)} />
           )}
         </div>
@@ -365,69 +368,157 @@ function deviceName(ua: string) {
   const browser = /Edg\//.test(ua) ? "Edge" : /Chrome\//.test(ua) ? "Chrome" : /Firefox\//.test(ua) ? "Firefox" : /Safari\//.test(ua) ? "Safari" : "Browser";
   return `${browser} di ${os}`;
 }
+function DeliverySettings({ saved, markDirty }: { saved: () => void; markDirty: () => void }) {
+  const { data, loading, error } = useData<DeliveryProfile>("/api/profile");
+  if (loading) return <Loading />;
+  if (!data) return <ErrorBox message={error} />;
+  return <DeliveryProfileForm key={JSON.stringify(data)} data={data} saved={saved} markDirty={markDirty} />;
+}
+function DeliveryProfileForm({ data, saved, markDirty }: { data: DeliveryProfile; saved: () => void; markDirty: () => void }) {
+  const { api, changed, notify } = useApp();
+  const [location, setLocation] = useState<Coordinates>({ latitude: data.latitude, longitude: data.longitude });
+  return (
+    <section className="detail-section">
+      <h2>Profil pengiriman</h2>
+      <p className="muted">Data ini mengisi checkout Anda secara otomatis. Anda bisa melengkapinya sekarang atau saat membuat pesanan.</p>
+      <ActionForm
+        label="Simpan profil pengiriman"
+        onSubmit={async (f) => {
+          await api("/api/profile", "PUT", { full_name: f.get("full_name"), whatsapp: f.get("whatsapp"), address: f.get("address"), ...location });
+          saved();
+          changed();
+          notify("Profil pengiriman disimpan.");
+        }}
+      >
+        <Field label="Nama lengkap">
+          <input name="full_name" autoComplete="name" maxLength={100} defaultValue={data.full_name} />
+        </Field>
+        <Field label="Nomor WhatsApp" hint="Contoh: 081234567890 atau +6281234567890.">
+          <input name="whatsapp" type="tel" autoComplete="tel" maxLength={25} defaultValue={data.whatsapp} />
+        </Field>
+        <Field label="Alamat lengkap">
+          <textarea name="address" autoComplete="street-address" maxLength={1000} rows={4} defaultValue={data.address} />
+        </Field>
+        <LocationMap
+          value={location}
+          onChange={(value) => {
+            setLocation(value);
+            markDirty();
+          }}
+        />
+      </ActionForm>
+    </section>
+  );
+}
+function ShippingSettings({ data, saved, markDirty }: { data: Settings; saved: () => void; markDirty: () => void }) {
+  const { api, changed, notify } = useApp();
+  const [mode, setMode] = useState(data.shipping_mode || "fixed");
+  const [location, setLocation] = useState<Coordinates>({ latitude: data.store_latitude, longitude: data.store_longitude });
+  const number = (f: FormData, name: string) => (f.get(name) === "" ? null : Number(f.get(name)));
+  return (
+    <section className="store-settings detail-section">
+      <h2>Pengiriman</h2>
+      <p className="muted">Lengkapi titik toko dan tarif sebelum mengaktifkan ongkir berdasarkan jarak.</p>
+      <ActionForm
+        label="Simpan pengaturan pengiriman"
+        onSubmit={async (f) => {
+          await api("/api/settings", "PUT", {
+            shipping_mode: mode,
+            shipping_fee: number(f, "shipping_fee"),
+            store_latitude: location.latitude,
+            store_longitude: location.longitude,
+            rate_per_km: number(f, "rate_per_km"),
+            max_distance_km: number(f, "max_distance_km"),
+          });
+          saved();
+          changed();
+          notify("Pengaturan pengiriman disimpan.");
+        }}
+      >
+        <Field label="Perhitungan ongkir">
+          <select
+            value={mode}
+            onChange={(e) => {
+              setMode(e.target.value as Settings["shipping_mode"]);
+              markDirty();
+            }}
+          >
+            <option value="fixed">Ongkir tetap</option>
+            <option value="dynamic">Ongkir berdasarkan jarak</option>
+          </select>
+        </Field>
+        <Field label="Ongkir tetap (Rp)" hint="Tetap berlaku ketika mode ongkir tetap dipilih. Masukkan 0 untuk gratis ongkir.">
+          <input name="shipping_fee" type="number" min={0} max={10000000} step={1} defaultValue={data.shipping_fee ?? ""} required={mode === "fixed"} />
+        </Field>
+        <LocationMap
+          label="Titik toko"
+          value={location}
+          onChange={(value) => {
+            setLocation(value);
+            markDirty();
+          }}
+        />
+        <div className="two-fields">
+          <Field label="Tarif per km (Rp)">
+            <input name="rate_per_km" type="number" min={0} max={10000000} step={1} defaultValue={data.rate_per_km ?? ""} required={mode === "dynamic"} />
+          </Field>
+          <Field label="Batas jarak pengiriman (km)">
+            <input name="max_distance_km" type="number" min={0.001} max={20050} step="any" defaultValue={data.max_distance_km ?? ""} required={mode === "dynamic"} />
+          </Field>
+        </div>
+        <p className="fine">
+          Jarak garis lurus dari toko dibulatkan ke atas ke km penuh untuk menghitung ongkir. Batas pengiriman diperiksa sebelum pembulatan. Tarif 0 berarti gratis ongkir.
+        </p>
+        <p className="fine">Perubahan hanya berlaku untuk pesanan baru.</p>
+      </ActionForm>
+    </section>
+  );
+}
 function StoreSettings({ section, saved, markDirty }: { section: string; saved: () => void; markDirty: () => void }) {
-  const { api, changed, notify } = useApp(),
-    { data, error, loading } = useData<Settings>("/api/settings"),
-    [qris, setQris] = useState<string | null>(null);
+  const { api, changed, notify } = useApp();
+  const { data, error, loading } = useData<Settings>("/api/settings");
+  const [qris, setQris] = useState<string | null>(null);
   useEffect(() => {
     if (data) setQris(data.qris_id);
   }, [data]);
   if (loading) return <Loading />;
   if (!data) return <ErrorBox message={error} />;
+  if (section === "pengiriman") return <ShippingSettings key={JSON.stringify(data)} data={data} saved={saved} markDirty={markDirty} />;
   return (
     <section className="store-settings detail-section">
-      <h2>{section === "pengiriman" ? "Pengiriman" : "Pembayaran"}</h2>
-      <p className="muted">Checkout aktif setelah ongkir dan minimal satu metode pembayaran lengkap.</p>
+      <h2>Pembayaran</h2>
+      <p className="muted">Lengkapi minimal satu metode pembayaran untuk menerima pesanan.</p>
       <ActionForm
         key={JSON.stringify(data)}
-        label={section === "pengiriman" ? "Simpan ongkir" : "Simpan pembayaran"}
+        label="Simpan pembayaran"
         onSubmit={async (f) => {
-          await api(
-            "/api/settings",
-            "PUT",
-            section === "pengiriman"
-              ? { shipping_fee: Number(f.get("shipping_fee")) }
-              : {
-                  bank_name: f.get("bank_name"),
-                  bank_account: f.get("bank_account"),
-                  bank_holder: f.get("bank_holder"),
-                  qris_id: qris,
-                }
-          );
+          await api("/api/settings", "PUT", { bank_name: f.get("bank_name"), bank_account: f.get("bank_account"), bank_holder: f.get("bank_holder"), qris_id: qris });
           saved();
           changed();
-          notify(section === "pengiriman" ? "Ongkir disimpan." : "Pembayaran disimpan.");
+          notify("Pembayaran disimpan.");
         }}
       >
-        {section === "pengiriman" ? (
-          <Field label="Ongkir tetap (Rp)" hint="Masukkan 0 untuk gratis ongkir.">
-            <input name="shipping_fee" type="number" min={0} max={10000000} step={1} defaultValue={data.shipping_fee ?? ""} required />
+        <div className="two-fields">
+          <Field label="Nama bank">
+            <input name="bank_name" maxLength={80} defaultValue={data.bank_name} />
           </Field>
-        ) : (
-          <>
-            <div className="two-fields">
-              <Field label="Nama bank">
-                <input name="bank_name" maxLength={80} defaultValue={data.bank_name} />
-              </Field>
-              <Field label="Nomor rekening">
-                <input name="bank_account" maxLength={80} defaultValue={data.bank_account} />
-              </Field>
-            </div>
-            <Field label="Nama pemilik rekening">
-              <input name="bank_holder" maxLength={120} defaultValue={data.bank_holder} />
-            </Field>
-            <p className="fine">Lengkapi ketiga kolom rekening untuk mengaktifkan transfer bank, atau kosongkan semuanya.</p>
-            <PhotoUpload
-              kind="qris"
-              value={qris}
-              onChange={(id) => {
-                setQris(id);
-                markDirty();
-              }}
-              label="Gambar QRIS statis"
-            />
-          </>
-        )}
+          <Field label="Nomor rekening">
+            <input name="bank_account" maxLength={80} defaultValue={data.bank_account} />
+          </Field>
+        </div>
+        <Field label="Nama pemilik rekening">
+          <input name="bank_holder" maxLength={120} defaultValue={data.bank_holder} />
+        </Field>
+        <p className="fine">Lengkapi ketiga kolom rekening untuk mengaktifkan transfer bank, atau kosongkan semuanya.</p>
+        <PhotoUpload
+          kind="qris"
+          value={qris}
+          onChange={(id) => {
+            setQris(id);
+            markDirty();
+          }}
+          label="Gambar QRIS statis"
+        />
         <p className="fine">Perubahan hanya berlaku untuk pesanan baru. Pesanan lama menyimpan instruksi pembayaran saat checkout.</p>
       </ActionForm>
     </section>

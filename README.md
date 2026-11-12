@@ -36,7 +36,7 @@ Pemulihan langsung menonaktifkan password lama, membatalkan link sebelumnya, dan
 | Kemampuan                                          | Owner | Staf  | Pelanggan |
 | -------------------------------------------------- | ----- | ----- | --------- |
 | Kelola barang dan seluruh pesanan                  | Ya    | Ya    | Tidak     |
-| Ubah ongkir                                        | Ya    | Ya    | Tidak     |
+| Ubah ongkir dan titik toko                         | Ya    | Tidak | Tidak     |
 | Atur rekening dan QRIS                             | Ya    | Tidak | Tidak     |
 | Buat/hapus akun staf dan pelanggan + aktivasi awal | Ya    | Tidak | Tidak     |
 | Statistik toko dan audit                           | Ya    | Tidak | Tidak     |
@@ -46,9 +46,23 @@ Pemulihan langsung menonaktifkan password lama, membatalkan link sebelumnya, dan
 - Staf: `/kelola/pelanggan` untuk pencarian dan pemulihan akun pelanggan.
 - Pelanggan: `/statistik` untuk statistik belanja pribadi.
 - Owner: `/owner/statistik`, `/owner/pengguna`, `/owner/log-aktivitas`.
-- Pengaturan akun: `/pengaturan#akun`, `#keamanan`, `#perangkat`; `#pengiriman` untuk owner/staf dan `#pembayaran` khusus owner.
+- Pengaturan akun: `/pengaturan#akun`, `#keamanan`, `#perangkat`; `#profil` untuk pelanggan; `#pengiriman` dan `#pembayaran` khusus owner.
 - Link password: `/atur-password#token=...`. URL `/seller` lama dialihkan ke penggantinya, lalu tetap diperiksa izinnya.
 - Owner tunggal dibuat melalui CLI, tidak dapat dihapus. Role semua akun tidak dapat diubah. Semua izin juga ditegakkan backend.
+
+## Profil dan ongkir
+
+Terapkan migrasi `0006_delivery.sql` sebelum menjalankan versi ini. Profil pelanggan dibaca/diubah melalui `GET/PUT /api/profile` dengan `{full_name,whatsapp,address,latitude,longitude}`. Profil boleh belum lengkap. Nomor WhatsApp Indonesia `08`, `628`, dan `+628` dinormalisasi menjadi `+628…`.
+
+Checkout wajib menyertakan koordinat tujuan. `POST /api/shipping/quote` menerima `{latitude,longitude}` dan mengembalikan mode, metode, koordinat asal/tujuan, jarak km, km tagihan, tarif, dan ongkir. Server menghitung ulang saat checkout. Setelah berhasil, pesanan dan profil disimpan secara atomik; pengulangan kunci checkout tidak mengganti profil kembali. Detail pesanan lama tetap bisa dibaca tanpa koordinat.
+
+Mode awal tetap memakai ongkir tetap lama. Owner dapat menyimpan titik toko, `rate_per_km`, dan `max_distance_km`, lalu memilih `shipping_mode: "dynamic"`. Jarak garis lurus dihitung memakai Haversine (radius bumi 6.371,0088 km). Ongkir = pembulatan ke atas jarak km × tarif; jarak nol menghasilkan ongkir nol. Batas layanan memakai jarak sebelum pembulatan. Pengaturan ini hanya dapat diubah owner.
+
+Peta memakai Leaflet dan tile OpenStreetMap. Ganti URL, atribusi, dan zoom maksimum bersama-sama di `lib/map-config.ts` untuk memakai penyedia lain; CSP otomatis memakai origin URL tersebut. Pertahankan atribusi terlihat, cache browser, dan Referer. Jangan menambahkan unduhan offline/prefetch. Lokasi perangkat hanya diminta setelah tombol ditekan; HTTPS diperlukan di luar localhost. Nama, nomor WhatsApp, dan alamat tidak dikirim ke penyedia tile.
+
+Pencarian alamat/tempat tersedia di peta profil, checkout, dan pengaturan titik toko melalui tombol Cari alamat atau Enter. Pilih hasil untuk memindahkan pin, lalu sesuaikan pin bila perlu. Alamat pengiriman tertulis tidak ditimpa oleh hasil pencarian. `GET /api/places?q=…` hanya tersedia untuk pelanggan/owner, menerima 3–200 karakter, dan mengembalikan maksimal 5 hasil `{name,address,latitude,longitude}`. Hanya istilah yang diketik pada pencarian dikirim ke penyedia; data profil tidak dikirim otomatis.
+
+Pencarian menggunakan [Photon](https://github.com/komoot/photon) berbasis OpenStreetMap tanpa API key. Permintaan dibatasi 10/menit per akun dan satu cache miss per 1,1 detik untuk seluruh aplikasi; hasil dicache 24 jam per lokasi Cloudflare. Pencarian tidak berjalan setiap mengetik. Endpoint Photon dapat diganti dengan binding `GEOCODING_URL` atau nilai default di `lib/map-config.ts`. Server publik Photon memiliki batas penggunaan wajar dan tanpa jaminan ketersediaan; untuk trafik besar gunakan instance sendiri/penyedia Photon lain. Saat pencarian gagal, pemilihan pin manual dan lokasi perangkat tetap tersedia.
 
 ## Akun dan link password
 

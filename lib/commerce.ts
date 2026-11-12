@@ -7,6 +7,7 @@ import { body, json, failure } from "./http";
 import { HttpError, text, integer, imageFile, digest, random, validPassword, hashPassword, verifyPassword } from "./security";
 import { newPasswordLink } from "./password-links";
 import { productPhotos, unusedProductPhotos } from "./products";
+import { coordinates, dynamicSettings, profile, saveProfile, shippingQuote } from "./delivery";
 
 export class RateLimiter extends DurableObject<Env> {
   async fetch(request: Request) {
@@ -243,6 +244,18 @@ export class Commerce extends DurableObject<Env> {
       return json({ ok: true });
     }
     unlocked(auth);
+    if (path === "/api/profile" && method === "PUT") {
+      role(auth, "buyer");
+      const value = profile(await body(request));
+      await db.batch([saveProfile(db, auth.id, value), this.audit(auth, "profile_updated", auth.id)]);
+      return json(value);
+    }
+    if (path === "/api/shipping/quote" && method === "POST") {
+      role(auth, "buyer");
+      const data = await body(request);
+      const config = (await db.prepare("SELECT * FROM settings WHERE id=1").first<Settings>())!;
+      return json(shippingQuote(config, data.latitude, data.longitude));
+    }
     if (path === "/api/username" && method === "PUT") {
       const data = await body(request),
         name = username(data.username);
@@ -289,12 +302,10 @@ export class Commerce extends DurableObject<Env> {
         key = text(data.key, "Kunci checkout", 80, 16);
       const previous = await db.prepare("SELECT id FROM orders WHERE user_id=? AND checkout_key=?").bind(auth.id, key).first();
       if (previous) return json(previous);
-      const recipient = text(data.recipient, "Nama penerima", 100),
-        phone = text(data.phone, "Nomor HP", 25, 8),
-        address = text(data.address, "Alamat lengkap", 1000, 15);
-      if (!/^[+\d\s()-]{8,25}$/.test(phone)) throw new HttpError(400, "Nomor HP tidak valid.");
+      const delivery = profile({ ...data, full_name: data.recipient, whatsapp: data.phone }, true);
+      const { full_name: recipient, whatsapp: phone, address } = delivery;
       const config = (await db.prepare("SELECT * FROM settings WHERE id=1").first<Settings>())!;
-      if (config.shipping_fee === null) throw new HttpError(409, "Toko belum mengatur ongkir.");
+      const quote = shippingQuote(config, delivery.latitude, delivery.longitude);
       const bankReady = !!(config.bank_name && config.bank_account && config.bank_holder);
       if ((data.payment_method === "bank" && !bankReady) || (data.payment_method === "qris" && !config.qris_id) || !["bank", "qris"].includes(String(data.payment_method)))
         throw new HttpError(400, "Metode pembayaran belum tersedia.");
@@ -302,7 +313,7 @@ export class Commerce extends DurableObject<Env> {
       if (!cart.results.length || cart.results.length > 20) throw new HttpError(400, "Isi keranjang dengan 1–20 jenis barang.");
       if (cart.results.some((p) => p.stock < p.quantity)) throw new HttpError(409, "Stok berubah. Periksa keranjang sebelum checkout.");
       const subtotal = cart.results.reduce((s, p) => s + p.price * p.quantity, 0),
-        total = subtotal + config.shipping_fee;
+        total = subtotal + quote.shipping_fee;
       if (data.expected_total !== total) throw new HttpError(409, "Harga atau ongkir berubah. Muat ulang dan periksa total sebelum checkout.");
       const now = Date.now(),
         id = crypto.randomUUID();
@@ -310,9 +321,28 @@ export class Commerce extends DurableObject<Env> {
       await db.batch([
         db
           .prepare(
-            `INSERT INTO orders(id,user_id,buyer_username,checkout_key,status,recipient,phone,address,subtotal,shipping_fee,total,payment_method,payment_snapshot,created_at,expires_at) VALUES(?,?,?,?,'pending',?,?,?,?,?,?,?,?,?,?)`
+            `INSERT INTO orders(id,user_id,buyer_username,checkout_key,status,recipient,phone,address,subtotal,shipping_fee,total,payment_method,payment_snapshot,created_at,expires_at,latitude,longitude,shipping_snapshot) VALUES(?,?,?,?,'pending',?,?,?,?,?,?,?,?,?,?,?,?,?)`
           )
-          .bind(id, auth.id, auth.username, key, recipient, phone, address, subtotal, config.shipping_fee, total, data.payment_method, JSON.stringify(config), now, now + 3600000),
+          .bind(
+            id,
+            auth.id,
+            auth.username,
+            key,
+            recipient,
+            phone,
+            address,
+            subtotal,
+            quote.shipping_fee,
+            total,
+            data.payment_method,
+            JSON.stringify(config),
+            now,
+            now + 3600000,
+            delivery.latitude,
+            delivery.longitude,
+            JSON.stringify(quote)
+          ),
+        saveProfile(db, auth.id, delivery),
         ...cart.results.map((p) =>
           db
             .prepare("INSERT INTO order_items(id,order_id,product_id,name,unit,price,quantity) VALUES(?,?,?,?,?,?,?)")
@@ -472,9 +502,9 @@ export class Commerce extends DurableObject<Env> {
       return json({ ok: true });
     }
     if (path === "/api/settings" && method === "PUT") {
+      role(auth, "owner");
       const current = await db.prepare("SELECT * FROM settings WHERE id=1").first<Record<string, unknown>>();
       const incoming = await body(request);
-      if (auth.role === "staff" && Object.keys(incoming).some((key) => key !== "shipping_fee")) throw new HttpError(403, "Staf hanya dapat mengubah ongkir.");
       const data = { ...current, ...incoming },
         shipping = data.shipping_fee === null ? null : integer(data.shipping_fee, "Ongkir", 0, 10000000),
         bank = text(data.bank_name ?? "", "Bank", 80, 0),
@@ -484,10 +514,32 @@ export class Commerce extends DurableObject<Env> {
       if ([bank, account, holder].some(Boolean) && ![bank, account, holder].every(Boolean))
         throw new HttpError(400, "Lengkapi seluruh informasi rekening atau kosongkan semuanya.");
       if (qris && !(await db.prepare("SELECT id FROM attachments WHERE id=? AND kind='qris'").bind(qris).first())) throw new HttpError(400, "Gambar QRIS tidak valid.");
-      const after = { shipping_fee: shipping, bank_name: bank, bank_account: account, bank_holder: holder, qris_id: qris };
+      if (!["fixed", "dynamic"].includes(String(data.shipping_mode))) throw new HttpError(400, "Mode ongkir tidak valid.");
+      const store = coordinates(data.store_latitude, data.store_longitude, false);
+      const rate = data.rate_per_km === null ? null : integer(data.rate_per_km, "Tarif per km", 0, 10000000);
+      const maxDistance = data.max_distance_km;
+      if (maxDistance !== null && (typeof maxDistance !== "number" || !Number.isFinite(maxDistance) || maxDistance <= 0 || maxDistance > 20050))
+        throw new HttpError(400, "Batas jarak harus lebih dari 0 dan maksimal 20.050 km.");
+      const after = {
+        shipping_fee: shipping,
+        bank_name: bank,
+        bank_account: account,
+        bank_holder: holder,
+        qris_id: qris,
+        shipping_mode: data.shipping_mode as Settings["shipping_mode"],
+        store_latitude: store.latitude,
+        store_longitude: store.longitude,
+        rate_per_km: rate,
+        max_distance_km: maxDistance as number | null,
+      };
+      if (after.shipping_mode === "dynamic") dynamicSettings(after);
       if (JSON.stringify(safeDetails(current!)) === JSON.stringify(after)) return json({ ok: true });
       await db.batch([
-        db.prepare("UPDATE settings SET shipping_fee=?,bank_name=?,bank_account=?,bank_holder=?,qris_id=? WHERE id=1").bind(shipping, bank, account, holder, qris),
+        db
+          .prepare(
+            "UPDATE settings SET shipping_fee=?,bank_name=?,bank_account=?,bank_holder=?,qris_id=?,shipping_mode=?,store_latitude=?,store_longitude=?,rate_per_km=?,max_distance_km=? WHERE id=1"
+          )
+          .bind(shipping, bank, account, holder, qris, after.shipping_mode, store.latitude, store.longitude, rate, maxDistance),
         this.audit(auth, "settings_updated", "1", { before: safeDetails(current!), after }),
       ]);
       return json({ ok: true });

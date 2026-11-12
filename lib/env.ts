@@ -1,4 +1,5 @@
 export interface Env {
+  GEOCODING_URL?: string;
   DB: D1Database;
   COMMERCE: DurableObjectNamespace;
   LIMITER: DurableObjectNamespace;

@@ -14,6 +14,31 @@ export interface User {
   role: Role;
   status: AccountStatus;
 }
+export interface Coordinates {
+  latitude: number | null;
+  longitude: number | null;
+}
+export interface PlaceResult {
+  name: string;
+  address: string;
+  latitude: number;
+  longitude: number;
+}
+export interface DeliveryProfile extends Coordinates {
+  full_name: string;
+  whatsapp: string;
+  address: string;
+}
+export interface ShippingQuote {
+  mode: "fixed" | "dynamic";
+  method: "fixed" | "haversine";
+  origin: Coordinates;
+  destination: Coordinates;
+  distance_km: number | null;
+  billable_km: number | null;
+  rate_per_km: number | null;
+  shipping_fee: number;
+}
 export interface Product {
   id: string;
   name: string;
@@ -29,6 +54,11 @@ export interface CartItem extends Product {
   quantity: number;
 }
 export interface Settings {
+  shipping_mode: "fixed" | "dynamic";
+  store_latitude: number | null;
+  store_longitude: number | null;
+  rate_per_km: number | null;
+  max_distance_km: number | null;
   shipping_fee: number | null;
   bank_name: string;
   bank_account: string;
@@ -36,6 +66,9 @@ export interface Settings {
   qris_id: string | null;
 }
 export interface Order {
+  latitude: number | null;
+  longitude: number | null;
+  shipping_snapshot: string | null;
   id: string;
   user_id: string | null;
   username?: string;

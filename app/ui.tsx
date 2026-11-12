@@ -149,12 +149,14 @@ export function ActionForm({
   label = "Simpan",
   className = "",
   disabled = false,
+  submitDisabled = false,
 }: {
   children: React.ReactNode;
   onSubmit: (data: FormData) => Promise<void>;
   label?: string;
   className?: string;
   disabled?: boolean;
+  submitDisabled?: boolean;
 }) {
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
@@ -178,7 +180,7 @@ export function ActionForm({
       <fieldset disabled={busy || disabled}>
         {children}
         <ErrorBox message={error} />
-        <button className="button primary" disabled={busy}>
+        <button className="button primary" disabled={busy || submitDisabled}>
           {busy ? "Memproses…" : label}
         </button>
       </fieldset>

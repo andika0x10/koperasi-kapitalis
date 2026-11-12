@@ -4,7 +4,8 @@ import { ProductGallery } from "./photos";
 import React, { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import type { Product, CartItem, Settings } from "../lib/types";
+import type { Product, CartItem, Settings, DeliveryProfile, Coordinates, ShippingQuote } from "../lib/types";
+import { LocationMap } from "./location-map";
 import { money } from "../lib/types";
 import { useApp, useData, Icon, ErrorBox, Loading, Empty, Field, ActionForm, image, Overlay } from "./ui";
 export function Catalog() {
@@ -279,7 +280,8 @@ export function Checkout() {
   const { api, changed } = useApp(),
     router = useRouter(),
     cart = useData<CartItem[]>("/api/cart"),
-    settings = useData<Settings>("/api/settings");
+    settings = useData<Settings>("/api/settings"),
+    profile = useData<DeliveryProfile>("/api/profile");
   const [checkoutError, setCheckoutError] = useState("");
   const [itemsOpen, setItemsOpen] = useState(false);
   useEffect(() => {
@@ -290,6 +292,42 @@ export function Checkout() {
     return () => query.removeEventListener("change", sync);
   }, []);
   const [draft, setDraft] = useState({ recipient: "", phone: "", address: "" });
+  const [location, setLocation] = useState<Coordinates>({ latitude: null, longitude: null });
+  const edited = useRef(new Set<string>());
+  const hydrated = useRef(false);
+  useEffect(() => {
+    if (!profile.data || hydrated.current) return;
+    hydrated.current = true;
+    const p = profile.data;
+    setDraft((current) => ({
+      recipient: edited.current.has("recipient") ? current.recipient : p.full_name,
+      phone: edited.current.has("phone") ? current.phone : p.whatsapp,
+      address: edited.current.has("address") ? current.address : p.address,
+    }));
+    if (!edited.current.has("location")) setLocation({ latitude: p.latitude, longitude: p.longitude });
+  }, [profile.data]);
+  const quoteKey = JSON.stringify([location.latitude, location.longitude, settings.data]);
+  const [estimate, setEstimate] = useState<{ key: string; quote?: ShippingQuote; error?: string } | null>(null);
+  const [quoteAttempt, setQuoteAttempt] = useState(0);
+  useEffect(() => {
+    let active = true;
+    if (location.latitude == null || location.longitude == null || !settings.data) return;
+    const timer = setTimeout(() => {
+      api<ShippingQuote>("/api/shipping/quote", "POST", location)
+        .then((quote) => {
+          if (active) setEstimate({ key: quoteKey, quote });
+        })
+        .catch((error) => {
+          if (active) setEstimate({ key: quoteKey, error: error.message });
+        });
+    }, 200);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [api, quoteKey, quoteAttempt]);
+  const quote = estimate?.key === quoteKey ? estimate.quote : undefined;
+  const quoteError = estimate?.key === quoteKey ? estimate.error : undefined;
   const [method, setMethod] = useState("bank"),
     key = useRef("");
   useEffect(() => {
@@ -313,7 +351,7 @@ export function Checkout() {
         </Link>
       </Empty>
     );
-  if (c?.shipping_fee === null || (!bank && !qris))
+  if ((c?.shipping_mode !== "dynamic" && c?.shipping_fee === null) || (!bank && !qris))
     return (
       <Empty title="Checkout belum tersedia">
         <p>Toko sedang menyiapkan ongkir dan metode pembayaran.</p>
@@ -321,7 +359,7 @@ export function Checkout() {
       </Empty>
     );
   const subtotal = cart.data.reduce((s, p) => s + p.price * p.quantity, 0),
-    total = subtotal + (c?.shipping_fee || 0);
+    total = quote ? subtotal + quote.shipping_fee : null;
   return (
     <>
       <Link className="back-link" href="/keranjang">
@@ -334,11 +372,14 @@ export function Checkout() {
         </div>
       </div>
       <ErrorBox message={checkoutError} />
+      <ErrorBox message={profile.error ? "Profil belum dapat dimuat. Anda tetap dapat mengisi data pengiriman secara manual." : ""} />
       <div className="checkout-layout">
         <section>
           <ActionForm
             label="Buat pesanan"
+            submitDisabled={!quote}
             onSubmit={async (f) => {
+              if (!quote || total === null) return;
               setCheckoutError("");
               let order: { id: string };
               try {
@@ -347,6 +388,8 @@ export function Checkout() {
                   recipient: f.get("recipient"),
                   phone: f.get("phone"),
                   address: f.get("address"),
+                  latitude: location.latitude,
+                  longitude: location.longitude,
                   payment_method: method,
                   expected_total: total,
                 });
@@ -363,21 +406,27 @@ export function Checkout() {
             <section className="form-section">
               <h2>Alamat pengiriman</h2>
               <div className="two-fields">
-                <Field label="Nama penerima">
+                <Field label="Nama lengkap">
                   <input
                     name="recipient"
                     value={draft.recipient}
-                    onChange={(e) => setDraft({ ...draft, recipient: e.target.value })}
+                    onChange={(e) => {
+                      edited.current.add("recipient");
+                      setDraft({ ...draft, recipient: e.target.value });
+                    }}
                     autoComplete="name"
                     maxLength={100}
                     required
                   />
                 </Field>
-                <Field label="Nomor HP">
+                <Field label="Nomor WhatsApp" hint="Contoh: 081234567890.">
                   <input
                     name="phone"
                     value={draft.phone}
-                    onChange={(e) => setDraft({ ...draft, phone: e.target.value })}
+                    onChange={(e) => {
+                      edited.current.add("phone");
+                      setDraft({ ...draft, phone: e.target.value });
+                    }}
                     type="tel"
                     autoComplete="tel"
                     minLength={8}
@@ -390,7 +439,10 @@ export function Checkout() {
                 <textarea
                   name="address"
                   value={draft.address}
-                  onChange={(e) => setDraft({ ...draft, address: e.target.value })}
+                  onChange={(e) => {
+                    edited.current.add("address");
+                    setDraft({ ...draft, address: e.target.value });
+                  }}
                   autoComplete="street-address"
                   rows={4}
                   minLength={15}
@@ -398,6 +450,29 @@ export function Checkout() {
                   required
                 />
               </Field>
+              <LocationMap
+                value={location}
+                center={{ latitude: c?.store_latitude ?? null, longitude: c?.store_longitude ?? null }}
+                onChange={(value) => {
+                  edited.current.add("location");
+                  setLocation(value);
+                }}
+              />
+              <p className="fine">Data pengiriman otomatis disimpan ke profil setelah pesanan berhasil dibuat.</p>
+              <ErrorBox message={quoteError} />
+              {quoteError && (
+                <button
+                  type="button"
+                  className="button secondary"
+                  onClick={() => {
+                    setEstimate(null);
+                    setQuoteAttempt((n) => n + 1);
+                    changed();
+                  }}
+                >
+                  Hitung ulang ongkir
+                </button>
+              )}
             </section>
             <section className="form-section">
               <h2>Metode pembayaran</h2>
@@ -452,12 +527,26 @@ export function Checkout() {
               <span>{money(subtotal)}</span>
             </div>
             <div>
-              <span>Ongkir tetap</span>
-              <span>{money(c?.shipping_fee || 0)}</span>
+              <span>{c?.shipping_mode === "dynamic" ? "Ongkir berdasarkan jarak" : "Ongkir tetap"}</span>
+              <span>{quote ? money(quote.shipping_fee) : "Belum dihitung"}</span>
             </div>
+            {quote?.mode === "dynamic" && (
+              <div className="shipping-calculation">
+                <span>
+                  Jarak garis lurus dari toko: {quote.distance_km!.toLocaleString("id-ID", { maximumFractionDigits: 3 })} km
+                  <br />
+                  {quote.billable_km} km × {money(quote.rate_per_km!)} / km
+                </span>
+              </div>
+            )}
+            {!quote && (
+              <p className="fine" role="status">
+                {quoteError || (location.latitude == null || location.longitude == null ? "Pilih titik pengiriman untuk menghitung ongkir." : "Menghitung ongkir…")}
+              </p>
+            )}
             <div className="receipt-total">
               <span>Total pembayaran</span>
-              <strong>{money(total)}</strong>
+              <strong>{total === null ? "—" : money(total)}</strong>
             </div>
           </div>
         </aside>
