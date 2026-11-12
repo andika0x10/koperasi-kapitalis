@@ -234,6 +234,12 @@ export class Commerce extends DurableObject<Env> {
     }
     if (path === "/api/sessions/revoke" && method === "POST") {
       const data = await body(request);
+      if (data.all === true) {
+        await limit(this.env, `sessions-revoke:user:${auth.id}`, 10, 15 * 60000);
+        validPassword(data.current);
+        const user = await db.prepare("SELECT password_hash FROM users WHERE id=?").bind(auth.id).first<{ password_hash: string | null }>();
+        if (!user || !(await verifyPassword(data.current, user.password_hash))) throw new HttpError(400, "Password saat ini salah.");
+      }
       const target = data.all === true ? null : text(data.id, "Sesi", 100);
       const existing = await db.prepare("SELECT id FROM sessions WHERE user_id=? AND (? IS NULL OR id=?)").bind(auth.id, target, target).all();
       if (existing.results.length)

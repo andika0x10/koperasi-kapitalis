@@ -338,21 +338,20 @@ export function AccountSettings() {
                   </div>
                 ))
               )}
-              <button
-                className="button secondary"
-                onClick={async () => {
+              <ActionForm
+                label="Keluar dari semua perangkat"
+                onSubmit={async (f) => {
                   if (!window.confirm("Keluar dari semua perangkat, termasuk perangkat ini?")) return;
-                  try {
-                    await api("/api/sessions/revoke", "POST", { all: true });
-                    await refresh();
-                    router.push("/masuk");
-                  } catch (e) {
-                    notify((e as Error).message);
-                  }
+                  await api("/api/sessions/revoke", "POST", { all: true, current: f.get("current") });
+                  setDirty(false);
+                  await refresh();
+                  router.push("/masuk");
                 }}
               >
-                Keluar dari semua perangkat
-              </button>
+                <Field label="Password saat ini" hint="Masukkan password untuk keluar dari semua perangkat, termasuk perangkat ini.">
+                  <input name="current" type="password" autoComplete="current-password" required minLength={12} maxLength={128} />
+                </Field>
+              </ActionForm>
             </section>
           )}
           {(active === "pengiriman" || active === "pembayaran") && me.user?.role === "owner" && (

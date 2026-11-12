@@ -504,7 +504,7 @@ test("password links immediately lock credentials, revoke sessions and allow one
   assert.equal((await ok(await req(client, "/api/me"))).user.status, "active");
   await ok(await req(client, "/api/password", "POST", { current: "wrong-password", password }), 400);
   await ok(await req(client, "/api/password", "POST", { current: "new-password-123", password }));
-  await ok(await req(client, "/api/sessions/revoke", "POST", { all: true }));
+  await ok(await req(client, "/api/sessions/revoke", "POST", { all: true, current: password }));
   await ok(await req(client, "/api/sessions"), 401);
 });
 
@@ -545,6 +545,24 @@ async function managed(role = "buyer") {
   const client = await loginAs(username, password);
   return { client, username };
 }
+test("revoking all sessions requires the current password and preserves sessions on rejection", async () => {
+  const { client, username } = await managed();
+  const otherSession = await loginAs(username, password);
+  const { client: otherUser } = await managed();
+  for (const current of [undefined, "", 123, "x".repeat(129), "wrong-password-123"]) {
+    await ok(await req(client, "/api/sessions/revoke", "POST", { all: true, current }), 400);
+    assert.equal((await ok(await req(client, "/api/sessions"))).length, 2);
+    await ok(await req(otherSession, "/api/sessions"));
+  }
+  assert.equal(await db.prepare("SELECT id FROM audit_log WHERE actor_id=? AND action='sessions_revoked'").bind(client.id).first(), null);
+  await ok(await req(client, "/api/sessions/revoke", "POST", { all: true, current: password }));
+  await ok(await req(client, "/api/sessions"), 401);
+  await ok(await req(otherSession, "/api/sessions"), 401);
+  await ok(await req(otherUser, "/api/sessions"));
+  const entry = await db.prepare("SELECT details FROM audit_log WHERE actor_id=? AND action='sessions_revoked'").bind(client.id).first<{ details: string }>();
+  assert.deepEqual(JSON.parse(entry!.details), { all: true, count: 2 });
+});
+
 test("multiple staff, owner-only management, immutable roles and restricted payment settings", async () => {
   const username = "staff_new";
   const created = await ok(await req(owner, "/api/users", "POST", { username, role: "staff" }), 201);
