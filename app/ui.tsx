@@ -145,13 +145,15 @@ export function StatusBadge({ status }: { status: Status }) {
 }
 export function ActionForm({
   children,
+  actions,
   onSubmit,
   label = "Simpan",
   className = "",
   disabled = false,
   submitDisabled = false,
 }: {
-  children: React.ReactNode;
+  children?: React.ReactNode;
+  actions?: React.ReactNode;
   onSubmit: (data: FormData) => Promise<void>;
   label?: string;
   className?: string;
@@ -180,9 +182,12 @@ export function ActionForm({
       <fieldset disabled={busy || disabled}>
         {children}
         <ErrorBox message={error} />
-        <button className="button primary" disabled={busy || submitDisabled}>
-          {busy ? "Memproses…" : label}
-        </button>
+        <div className="button-row form-actions">
+          {actions}
+          <button className="button primary" disabled={busy || submitDisabled}>
+            {busy ? "Memproses…" : label}
+          </button>
+        </div>
       </fieldset>
     </form>
   );

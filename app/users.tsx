@@ -15,6 +15,11 @@ export function DeleteDialog({ name, kind, onClose, onDelete }: { name: string; 
       <ActionForm
         label="Hapus permanen"
         className="danger-form"
+        actions={
+          <button type="button" className="button secondary" onClick={onClose}>
+            Batal
+          </button>
+        }
         onSubmit={async () => {
           try {
             await onDelete();
@@ -35,9 +40,6 @@ export function DeleteDialog({ name, kind, onClose, onDelete }: { name: string; 
             ))}
           </div>
         )}
-        <button type="button" className="button secondary" onClick={onClose}>
-          Batal
-        </button>
       </ActionForm>
     </Overlay>
   );
@@ -221,17 +223,18 @@ export function Users({ customersOnly = false }: { customersOnly?: boolean }) {
           </p>
           <ActionForm
             label={blocking.is_blocked ? "Buka blokir" : "Blokir pelanggan"}
+            actions={
+              <button type="button" className="button secondary" onClick={() => setBlocking(null)}>
+                Batal
+              </button>
+            }
             onSubmit={async () => {
               await api(`/api/users/${blocking.id}/${blocking.is_blocked ? "unblock" : "block"}`, "POST", {});
               notify(blocking.is_blocked ? "Blokir pelanggan dibuka." : "Pelanggan diblokir. Pesanan pending dibatalkan.");
               setBlocking(null);
               changed();
             }}
-          >
-            <button type="button" className="button secondary" onClick={() => setBlocking(null)}>
-              Batal
-            </button>
-          </ActionForm>
+          />
         </Overlay>
       )}
       {resetting && (

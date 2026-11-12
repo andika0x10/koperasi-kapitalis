@@ -489,7 +489,7 @@ tbody td {
 .photo-controls {
   display: flex;
   flex-wrap: wrap;
-  gap: 0 10px;
+  gap: var(--action-gap);
 }
 .photo-controls button {
   font-size: 12px;

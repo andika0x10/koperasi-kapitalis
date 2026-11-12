@@ -12,6 +12,7 @@
   --muted: #666;
   --line: #e6e6e6;
   --surface: #f6f6f6;
+  --action-gap: 12px;
   font-family: "Public Sans Variable", "Public Sans", sans-serif;
   color: var(--ink);
   background: #fff;
@@ -760,7 +761,7 @@ nav {
 .field small {
   font-size: 11px;
 }
-.form fieldset > .button {
+.form-actions {
   margin-top: 6px;
 }
 .form-section {
@@ -1202,7 +1203,7 @@ tbody tr:hover {
 }
 .button-row {
   display: flex;
-  gap: 14px;
+  gap: var(--action-gap);
   align-items: center;
   flex-wrap: wrap;
 }
@@ -1797,7 +1798,7 @@ tbody tr:hover {
     padding: 18px;
   }
   .button-row {
-    gap: 12px;
+    gap: var(--action-gap);
   }
   .decision-panel .button {
     font-size: 11px;
@@ -2668,7 +2669,7 @@ select,
 .row-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: var(--action-gap);
 }
 .danger-text {
   color: #a52922;
