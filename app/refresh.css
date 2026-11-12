@@ -186,7 +186,26 @@ select {
 .main {
   padding-top: 36px;
 }
+.site {
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+.content-scroll {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.content-scroll > .main,
+.content-scroll > .footer {
+  flex-shrink: 0;
+}
 .header {
+  flex-shrink: 0;
   position: relative;
   z-index: 20;
 }
@@ -645,15 +664,25 @@ tbody td {
   height: auto;
 }
 @media (min-width: 1150px) {
+  .management-site {
+    display: grid;
+    grid-template-columns: 232px minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .management-site > .header {
+    grid-column: 1 / -1;
+  }
+  .management-site > .content-scroll {
+    grid-column: 2;
+    grid-row: 2;
+  }
   .management-site .header .menu-toggle {
     display: none;
   }
   .management-sidebar {
-    position: fixed;
-    top: 88px;
-    bottom: 0;
-    left: 0;
-    width: 232px;
+    grid-column: 1;
+    grid-row: 2;
+    min-height: 0;
     display: flex;
     flex-direction: column;
     padding: 28px 16px;
@@ -788,14 +817,14 @@ tbody td {
 }
 @media (min-width: 1150px) {
   .management-site .main {
-    margin-left: 232px;
-    width: calc(100% - 232px);
+    margin-left: 0;
+    width: 100%;
     max-width: none;
     padding: 36px 36px 72px;
   }
   .management-site .footer {
-    margin-left: 232px;
-    width: calc(100% - 232px);
+    margin-left: 0;
+    width: 100%;
     padding-left: 36px;
     padding-right: 36px;
   }
@@ -993,9 +1022,6 @@ tbody td {
 }
 .modal-header > button {
   justify-self: end;
-}
-.sidebar-avatar {
-  background: linear-gradient(135deg, #ff6f12, #ffd2a8);
 }
 
 .purchase-order-status {

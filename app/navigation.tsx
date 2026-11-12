@@ -4,6 +4,17 @@ import Link from "next/link";
 import { useApp, useData, Icon, Overlay } from "./ui";
 import type { CartItem } from "../lib/types";
 import { isOperator, roleLabel } from "../lib/types";
+
+function avatarGradient(username: string) {
+  let hash = 2166136261;
+  for (const character of username.trim().toLowerCase()) {
+    hash = Math.imul(hash ^ character.charCodeAt(0), 16777619) >>> 0;
+  }
+  const hue = hash % 360;
+  const secondHue = (hue + 35 + ((hash >>> 16) % 55)) % 360;
+  return `linear-gradient(135deg, hsl(${hue} 75% 55%), hsl(${secondHue} 85% 80%))`;
+}
+
 export function Navigation({ path, logout }: { path: string; logout: () => Promise<void> }) {
   const { me } = useApp(),
     operator = isOperator(me.user?.role);
@@ -122,7 +133,7 @@ export function Navigation({ path, logout }: { path: string; logout: () => Promi
       {nav}
       <div className="sidebar-account" aria-label="Akun Anda">
         <div className="sidebar-account-identity">
-          <span className="sidebar-avatar" aria-hidden="true" />
+          <span className="sidebar-avatar" aria-hidden="true" style={{ backgroundImage: avatarGradient(me.user?.username || "") }} />
           <div>
             <strong>{me.user?.username}</strong>
             <small>{me.user ? roleLabel[me.user.role] : ""}</small>
@@ -146,64 +157,66 @@ export function Navigation({ path, logout }: { path: string; logout: () => Promi
     </div>
   );
   return (
-    <header className="header">
-      <div className="header-inner">
-        <Link href={me.user?.role === "owner" ? "/owner/statistik" : operator ? "/kelola/pesanan" : "/"} className="wordmark">
-          Koperasi{" "}
-          <strong>
-            Kapitalis<span>.</span>
-          </strong>
-        </Link>
-        <div className="desktop-navigation">{nav}</div>
-        <div className="header-actions">
-          {!operator && (
-            <Link
-              href="/keranjang"
-              className="header-cart"
-              aria-label={cart.error ? "Keranjang, jumlah belum tersedia" : `Keranjang, ${count} barang`}
-              aria-current={path === "/keranjang" ? "page" : undefined}
-            >
-              <Icon name="bag" />
-              <span>{cart.error ? "!" : count}</span>
-            </Link>
-          )}
-          {!operator && (
-            <div className="account-menu" ref={accountRef}>
-              {me.user ? (
-                <>
-                  <button ref={trigger} className="account-trigger" aria-expanded={account} aria-controls="account-menu" onClick={() => setAccount(!account)}>
-                    <Icon name="user" />
-                    <span>{me.user.username}</span>
-                  </button>
-                  {account && (
-                    <div id="account-menu" className="account-dropdown">
-                      {accountLinks}
-                    </div>
-                  )}
-                </>
-              ) : (
-                accountLinks
-              )}
-            </div>
-          )}
-          <button className="menu-toggle icon-button" aria-label="Buka menu navigasi" aria-expanded={mobile} aria-controls="mobile-menu" onClick={() => setMobile(true)}>
-            <Icon name="menu" />
-          </button>
+    <>
+      <header className="header">
+        <div className="header-inner">
+          <Link href={me.user?.role === "owner" ? "/owner/statistik" : operator ? "/kelola/pesanan" : "/"} className="wordmark">
+            Koperasi{" "}
+            <strong>
+              Kapitalis<span>.</span>
+            </strong>
+          </Link>
+          <div className="desktop-navigation">{nav}</div>
+          <div className="header-actions">
+            {!operator && (
+              <Link
+                href="/keranjang"
+                className="header-cart"
+                aria-label={cart.error ? "Keranjang, jumlah belum tersedia" : `Keranjang, ${count} barang`}
+                aria-current={path === "/keranjang" ? "page" : undefined}
+              >
+                <Icon name="bag" />
+                <span>{cart.error ? "!" : count}</span>
+              </Link>
+            )}
+            {!operator && (
+              <div className="account-menu" ref={accountRef}>
+                {me.user ? (
+                  <>
+                    <button ref={trigger} className="account-trigger" aria-expanded={account} aria-controls="account-menu" onClick={() => setAccount(!account)}>
+                      <Icon name="user" />
+                      <span>{me.user.username}</span>
+                    </button>
+                    {account && (
+                      <div id="account-menu" className="account-dropdown">
+                        {accountLinks}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  accountLinks
+                )}
+              </div>
+            )}
+            <button className="menu-toggle icon-button" aria-label="Buka menu navigasi" aria-expanded={mobile} aria-controls="mobile-menu" onClick={() => setMobile(true)}>
+              <Icon name="menu" />
+            </button>
+          </div>
         </div>
-      </div>
+        <Overlay open={mobile} onClose={() => setMobile(false)} title="Menu" className="navigation-overlay">
+          <div id="mobile-menu">
+            {operator ? (
+              managementNavigation
+            ) : (
+              <>
+                {nav}
+                <div className="mobile-account">{accountLinks}</div>
+              </>
+            )}
+          </div>
+        </Overlay>
+      </header>
       {operator && <aside className="management-sidebar">{managementNavigation}</aside>}
-      <Overlay open={mobile} onClose={() => setMobile(false)} title="Menu" className="navigation-overlay">
-        <div id="mobile-menu">
-          {operator ? (
-            managementNavigation
-          ) : (
-            <>
-              {nav}
-              <div className="mobile-account">{accountLinks}</div>
-            </>
-          )}
-        </div>
-      </Overlay>
-    </header>
+    </>
   );
 }

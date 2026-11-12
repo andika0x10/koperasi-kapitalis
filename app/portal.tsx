@@ -23,6 +23,9 @@ export default function Portal() {
     [version, setVersion] = useState(0);
   const path = usePathname(),
     router = useRouter();
+  useEffect(() => {
+    document.querySelector(".content-scroll")?.scrollTo(0, 0);
+  }, [path]);
   const refresh = useCallback(async () => {
     const response = await fetch("/api/me", { cache: "no-store" });
     if (!response.ok) throw new Error("Aplikasi belum dapat terhubung. Muat ulang halaman.");
@@ -119,14 +122,16 @@ export default function Portal() {
           Lewati ke konten
         </a>
         <Navigation path={path} logout={logout} />
-        <main className="main" id="main">
-          {!ready ? <Loading /> : bootError ? <ErrorBox message={bootError} /> : <Screen path={path} />}
-        </main>
-        <footer className="footer">
-          <span>Koperasi Kapitalis</span>
-          <span>Kebutuhan sehari-hari, dalam satu tempat.</span>
-          <span>Harga dalam Rupiah</span>
-        </footer>
+        <div className="content-scroll">
+          <main className="main" id="main" tabIndex={-1}>
+            {!ready ? <Loading /> : bootError ? <ErrorBox message={bootError} /> : <Screen path={path} />}
+          </main>
+          <footer className="footer">
+            <span>Koperasi Kapitalis</span>
+            <span>Kebutuhan sehari-hari, dalam satu tempat.</span>
+            <span>Harga dalam Rupiah</span>
+          </footer>
+        </div>
         {noticeTarget ? createPortal(notification, noticeTarget) : notification}
       </div>
     </Context.Provider>
