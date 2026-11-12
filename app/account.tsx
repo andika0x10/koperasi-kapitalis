@@ -413,22 +413,25 @@ function DeliveryProfileForm({ data, saved, markDirty }: { data: DeliveryProfile
 function ShippingSettings({ data, saved, markDirty }: { data: Settings; saved: () => void; markDirty: () => void }) {
   const { api, changed, notify } = useApp();
   const [mode, setMode] = useState(data.shipping_mode || "fixed");
+  const [shippingFee, setShippingFee] = useState(String(data.shipping_fee ?? ""));
+  const [ratePerKm, setRatePerKm] = useState(String(data.rate_per_km ?? ""));
+  const [maxDistanceKm, setMaxDistanceKm] = useState(String(data.max_distance_km ?? ""));
   const [location, setLocation] = useState<Coordinates>({ latitude: data.store_latitude, longitude: data.store_longitude });
-  const number = (f: FormData, name: string) => (f.get(name) === "" ? null : Number(f.get(name)));
+  const number = (value: string) => (value === "" ? null : Number(value));
   return (
     <section className="store-settings detail-section">
       <h2>Pengiriman</h2>
       <p className="muted">Lengkapi titik toko dan tarif sebelum mengaktifkan ongkir berdasarkan jarak.</p>
       <ActionForm
         label="Simpan pengaturan pengiriman"
-        onSubmit={async (f) => {
+        onSubmit={async () => {
           await api("/api/settings", "PUT", {
             shipping_mode: mode,
-            shipping_fee: number(f, "shipping_fee"),
+            shipping_fee: number(shippingFee),
             store_latitude: location.latitude,
             store_longitude: location.longitude,
-            rate_per_km: number(f, "rate_per_km"),
-            max_distance_km: number(f, "max_distance_km"),
+            rate_per_km: number(ratePerKm),
+            max_distance_km: number(maxDistanceKm),
           });
           saved();
           changed();
@@ -447,28 +450,33 @@ function ShippingSettings({ data, saved, markDirty }: { data: Settings; saved: (
             <option value="dynamic">Ongkir berdasarkan jarak</option>
           </select>
         </Field>
-        <Field label="Ongkir tetap (Rp)" hint="Tetap berlaku ketika mode ongkir tetap dipilih. Masukkan 0 untuk gratis ongkir.">
-          <input name="shipping_fee" type="number" min={0} max={10000000} step={1} defaultValue={data.shipping_fee ?? ""} required={mode === "fixed"} />
-        </Field>
-        <LocationMap
-          label="Titik toko"
-          value={location}
-          onChange={(value) => {
-            setLocation(value);
-            markDirty();
-          }}
-        />
-        <div className="two-fields">
-          <Field label="Tarif per km (Rp)">
-            <input name="rate_per_km" type="number" min={0} max={10000000} step={1} defaultValue={data.rate_per_km ?? ""} required={mode === "dynamic"} />
+        {mode === "fixed" ? (
+          <Field label="Ongkir tetap (Rp)" hint="Masukkan 0 untuk gratis ongkir.">
+            <input name="shipping_fee" type="number" min={0} max={10000000} step={1} value={shippingFee} onChange={(e) => setShippingFee(e.target.value)} required />
           </Field>
-          <Field label="Batas jarak pengiriman (km)">
-            <input name="max_distance_km" type="number" min={0.001} max={20050} step="any" defaultValue={data.max_distance_km ?? ""} required={mode === "dynamic"} />
-          </Field>
-        </div>
-        <p className="fine">
-          Jarak garis lurus dari toko dibulatkan ke atas ke km penuh untuk menghitung ongkir. Batas pengiriman diperiksa sebelum pembulatan. Tarif 0 berarti gratis ongkir.
-        </p>
+        ) : (
+          <>
+            <LocationMap
+              label="Titik toko"
+              value={location}
+              onChange={(value) => {
+                setLocation(value);
+                markDirty();
+              }}
+            />
+            <div className="two-fields">
+              <Field label="Tarif per km (Rp)">
+                <input name="rate_per_km" type="number" min={0} max={10000000} step={1} value={ratePerKm} onChange={(e) => setRatePerKm(e.target.value)} required />
+              </Field>
+              <Field label="Batas jarak pengiriman (km)">
+                <input name="max_distance_km" type="number" min={0.001} max={20050} step="any" value={maxDistanceKm} onChange={(e) => setMaxDistanceKm(e.target.value)} required />
+              </Field>
+            </div>
+            <p className="fine">
+              Jarak garis lurus dari toko dibulatkan ke atas ke km penuh untuk menghitung ongkir. Batas pengiriman diperiksa sebelum pembulatan. Tarif 0 berarti gratis ongkir.
+            </p>
+          </>
+        )}
         <p className="fine">Perubahan hanya berlaku untuk pesanan baru.</p>
       </ActionForm>
     </section>
