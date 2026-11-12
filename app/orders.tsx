@@ -191,6 +191,14 @@ export function OrderDetail({ id }: { id: string }) {
               </div>
             </div>
           )}
+          {o.status === "cancelled" && (
+            <div className="alert error">
+              <div>
+                <strong>Pesanan dibatalkan</strong>
+                <p>{o.reason} Stok sudah dikembalikan.</p>
+              </div>
+            </div>
+          )}
           {o.status === "expired" && (
             <div className="alert">
               <p>Waktu pembayaran habis. Stok sudah dilepas. Buat pesanan baru untuk melanjutkan.</p>
@@ -434,7 +442,7 @@ export function OrderDetail({ id }: { id: string }) {
             ))}
           </ol>
           <p className="fine">Isi pesanan dan bukti pembayaran terkunci. Keputusan pembayaran bersifat final.</p>
-          {!operator && ["expired", "rejected", "completed"].includes(o.status) && (
+          {!operator && ["expired", "rejected", "cancelled", "completed"].includes(o.status) && (
             <Link className="button secondary full" href="/">
               Kembali ke katalog
             </Link>

@@ -95,6 +95,17 @@ test("D1 forward migration preserves populated history and atomically refuses ar
     });
     assert.equal(await db.prepare("SELECT shipping_mode FROM settings WHERE id=1").first("shipping_mode"), "fixed");
     assert.equal((await db.prepare("SELECT * FROM delivery_profiles").all()).results.length, 0);
+    await db.batch(statements(readFileSync("migrations/0007_block_customers.sql", "utf8")).map((sql) => db.prepare(sql)));
+    assert.deepEqual(await db.prepare("SELECT user_id,buyer_username,total,status,latitude FROM orders WHERE id='order'").first(), {
+      user_id: null,
+      buyer_username: "pembeli_lama",
+      total: 16000,
+      status: "expired",
+      latitude: null,
+    });
+    assert.equal(await db.prepare("SELECT name FROM order_items WHERE id='item'").first("name"), "Minyak snapshot");
+    assert.equal(await db.prepare("SELECT actor_username FROM order_events WHERE id='initial'").first("actor_username"), "pembeli_lama");
+    assert.equal(await db.prepare("SELECT is_blocked FROM users WHERE id='old-staff'").first("is_blocked"), 0);
     assert.deepEqual(await db.prepare("SELECT attachment_id,position FROM product_photos WHERE product_id='live'").first(), { attachment_id: "photo", position: 0 });
     assert.deepEqual((await db.prepare("PRAGMA foreign_key_check").all()).results, []);
   } finally {

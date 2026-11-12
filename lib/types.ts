@@ -7,12 +7,13 @@ export interface PasswordLink {
   url: string;
   expires_at: number;
 }
-export type Status = "pending" | "review" | "approved" | "rejected" | "expired" | "shipped" | "completed";
+export type Status = "pending" | "review" | "approved" | "rejected" | "expired" | "cancelled" | "shipped" | "completed";
 export interface User {
   id: string;
   username: string;
   role: Role;
   status: AccountStatus;
+  is_blocked?: number;
 }
 export interface Coordinates {
   latitude: number | null;
@@ -119,6 +120,7 @@ export const statusLabel: Record<Status, string> = {
   approved: "Pembayaran disetujui",
   rejected: "Ditolak",
   expired: "Kedaluwarsa",
+  cancelled: "Dibatalkan",
   shipped: "Dikirim",
   completed: "Selesai",
 };

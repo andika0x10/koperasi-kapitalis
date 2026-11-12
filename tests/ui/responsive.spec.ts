@@ -535,6 +535,31 @@ for (const width of [320, 390, 768, 1440]) {
   });
 }
 
+test("staff can block and unblock customers with reset hidden while blocked", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 900 });
+  await fixture(page, "staff");
+  let blocked = false;
+  await page.route("**/api/users**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith("/block")) blocked = true;
+    else if (path.endsWith("/unblock")) blocked = false;
+    else return route.fulfill({ json: [{ id: "buyer-block", username: "pelanggan_uji", role: "buyer", status: "active", is_blocked: blocked ? 1 : 0, created_at: now }] });
+    return route.fulfill({ json: { ok: true } });
+  });
+  await page.goto("/kelola/pelanggan");
+  await page.getByRole("button", { name: "Blokir", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Blokir pelanggan", exact: true });
+  await expect(dialog.getByText(/otomatis dibatalkan dan stok dikembalikan/)).toBeVisible();
+  await dialog.getByRole("button", { name: "Blokir pelanggan", exact: true }).click();
+  await expect(page.locator(".users-table .status")).toHaveText("Diblokir");
+  await expect(page.getByRole("button", { name: "Buat link reset", exact: true })).toHaveCount(0);
+  await noOverflow(page);
+  await page.getByRole("button", { name: "Buka blokir", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Buka blokir", exact: true }).click();
+  await expect(page.locator(".users-table .status")).toHaveText("Aktif");
+  await expect(page.getByRole("button", { name: "Buat link reset", exact: true })).toBeVisible();
+});
+
 test("customer statistics and staff customer recovery", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 900 });
   await fixture(page, "buyer");

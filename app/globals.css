@@ -1010,7 +1010,8 @@ tbody tr:hover {
   background: #edf6ef;
   color: #285d36;
 }
-.status.rejected {
+.status.rejected,
+.status.cancelled {
   background: #fceeed;
   color: #9a302a;
 }

@@ -147,14 +147,15 @@ export async function api(request: Request, env: Env): Promise<Response> {
       const q = (url.searchParams.get("q") || "").slice(0, 32),
         filter = auth.role === "staff" ? "buyer" : url.searchParams.get("role") || "",
         status = url.searchParams.get("status") || "";
-      if (!["", "buyer", "staff", "owner"].includes(filter) || !["", "active", "pending", "reset_required"].includes(status)) throw new HttpError(400, "Filter tidak valid.");
+      if (!["", "buyer", "staff", "owner"].includes(filter) || !["", "active", "pending", "reset_required", "blocked"].includes(status))
+        throw new HttpError(400, "Filter tidak valid.");
       return json(
         (
           await db
             .prepare(
-              "SELECT id,username,role,status,created_at FROM users WHERE instr(lower(username),lower(?))>0 AND (?='' OR role=?) AND (?='' OR status=?) ORDER BY created_at DESC,id DESC LIMIT 30 OFFSET ?"
+              "SELECT id,username,role,status,is_blocked,created_at FROM users WHERE instr(lower(username),lower(?))>0 AND (?='' OR role=?) AND (?='' OR (?='blocked' AND is_blocked=1) OR (is_blocked=0 AND status=?)) ORDER BY created_at DESC,id DESC LIMIT 30 OFFSET ?"
             )
-            .bind(q, filter, filter, status, status, pageNumber(url) * 30)
+            .bind(q, filter, filter, status, status, status, pageNumber(url) * 30)
             .all()
         ).results
       );

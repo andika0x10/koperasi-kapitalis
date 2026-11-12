@@ -72,6 +72,8 @@ Owner memilih Tambah staf atau Tambah pelanggan lalu memasukkan username saja. A
 
 Link baru selalu membatalkan link sebelumnya. Reset langsung mengganti status akun menjadi `reset_required`, mengosongkan hash password, dan mencabut seluruh sesi. Link berlaku tepat 1 jam, sekali pakai; hanya hash token yang disimpan. Token masuk fragmen URL dan body permintaan, tidak masuk query/path API atau audit. Pengguna menentukan password 12–128 karakter lalu login kembali; tidak otomatis masuk.
 
+Staf dan owner dapat memblokir/membuka blokir pelanggan melalui `POST /api/users/:id/block` dan `POST /api/users/:id/unblock`. Blokir mencabut seluruh sesi dan link aktivasi/reset, menolak login serta penerbitan/pemakaian link password, dan membatalkan pesanan berstatus `pending` menjadi `cancelled` dengan pengembalian stok, riwayat, dan audit dalam satu transaksi. Pesanan yang sudah masuk pemeriksaan atau tahap berikutnya tetap diproses. Unblock mempertahankan status aktivasi/reset sebelumnya dan tidak memulihkan link, sesi, atau pesanan yang dibatalkan; buat link baru bila diperlukan. Migrasi `0007_block_customers.sql` menambahkan penanda blokir dan status pesanan dibatalkan sambil mempertahankan riwayat.
+
 `POST /api/password-links/validate` menerima `{token}` dan mengembalikan username serta kedaluwarsa. `POST /api/password-links/complete` menerima `{token,password}`. Keduanya publik dengan pemeriksaan origin dan rate limit; konsumsi link serta aktivasi bersifat atomik. Ganti password biasa melalui `/api/password` tetap memerlukan password saat ini, membatalkan link aktif, dan mencabut sesi perangkat lain.
 
 Tidak ada email atau notifikasi eksternal. Pelanggan yang lupa password meminta link kepada staf; staf meminta kepada owner; pemulihan owner melalui CLI.
@@ -107,7 +109,7 @@ Satu bukti pembayaran diunggah sebelum tenggat. Bukti tidak dapat diganti; retry
 
 Semua mutasi memerlukan Origin yang sama. Selain login, registrasi, dan konsumsi link password, mutasi juga memerlukan cookie sesi dan `x-csrf-token` dari `/api/me`. Respons error berbentuk `{error}`. JSON API memakai `Cache-Control: no-store`.
 
-`GET /api/users` untuk owner dan staf. Staf selalu dibatasi pada pelanggan, termasuk jika mengirim filter role lain; staf tidak dapat menambah/menghapus akun. Owner mendukung filter `q`, `role=owner|staff|buyer`, `status=pending|active|reset_required`, serta `page` mulai 0, 30 baris per halaman. Katalog mendukung `q` dan `category`, dibatasi 500 barang.
+`GET /api/users` untuk owner dan staf. Staf selalu dibatasi pada pelanggan, termasuk jika mengirim filter role lain; staf tidak dapat menambah/menghapus akun. Owner mendukung filter `q`, `role=owner|staff|buyer`, `status=pending|active|reset_required|blocked`, serta `page` mulai 0, 30 baris per halaman. Filter status aktivasi/reset hanya mencakup akun yang tidak diblokir. Katalog mendukung `q` dan `category`, dibatasi 500 barang.
 
 `GET /api/audit-logs` khusus owner: filter `actor`, `action`, `q`, pasangan `from`/`to` dalam WIB, dan `page`; maksimal 30 catatan per halaman, terbaru dahulu. Detail before/after memakai allowlist; password, hash password, token, isi gambar, dan data pribadi lengkap pesanan tidak dicatat. Kejadian mencakup aktivasi, penerbitan/pemakaian link, penghapusan, dan mutasi operasional. Pembacaan tidak dicatat. Retensi tetap 365 hari dengan alarm harian saat toko idle.
 

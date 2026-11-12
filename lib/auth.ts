@@ -9,7 +9,7 @@ export async function authenticate(request: Request, env: Env, required = true):
   }
   const now = Date.now();
   const auth = await env.DB.prepare(
-    `SELECT u.id,u.username,u.role,u.status,s.id AS session_id,s.csrf FROM sessions s JOIN users u ON u.id=s.user_id WHERE u.status='active' AND s.token_hash=? AND s.expires_at>? AND s.last_seen>?`
+    `SELECT u.id,u.username,u.role,u.status,s.id AS session_id,s.csrf FROM sessions s JOIN users u ON u.id=s.user_id WHERE u.status='active' AND u.is_blocked=0 AND s.token_hash=? AND s.expires_at>? AND s.last_seen>?`
   )
     .bind(await digest(token), now, now - 7 * DAY)
     .first<Auth>();

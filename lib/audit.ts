@@ -26,6 +26,8 @@ const allowed = new Set([
   "qris_id",
   "quantity",
   "status",
+  "is_blocked",
+  "cancelled_orders",
   "courier",
   "total",
   "payment_method",

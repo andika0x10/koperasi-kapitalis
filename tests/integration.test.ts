@@ -932,3 +932,127 @@ test("reset permissions and staff user lists cannot escape customer boundaries",
   await ok(await activate(link), 400);
   await ok(await req(owner, "/api/users/" + operator.client.id + "/reset", "POST", {}));
 });
+
+test("login errors distinguish wrong credentials, activation and password reset", async () => {
+  const user = await managed();
+  const attempt = (name: string, secret = password) => req(null, "/api/login", "POST", { username: name, password: secret }, { "cf-connecting-ip": crypto.randomUUID() });
+  assert.equal((await ok(await attempt(user.username, "incorrect-password"), 401)).error, "Username atau password salah.");
+  assert.equal((await ok(await attempt("unknown_" + crypto.randomUUID().slice(0, 8)), 401)).error, "Username atau password salah.");
+  await ok(await req(staff, `/api/users/${user.client.id}/reset`, "POST", {}));
+  assert.match((await ok(await attempt(user.username), 401)).error, /^Akun sedang direset\./);
+  const username = "pending_" + crypto.randomUUID().slice(0, 8);
+  await ok(await req(owner, "/api/users", "POST", { username, role: "buyer" }), 201);
+  assert.match((await ok(await attempt(username), 401)).error, /^Akun belum aktif\./);
+});
+
+test("blocking customers atomically cancels only pending orders, releases stock once and revokes access", async () => {
+  await cleanCart();
+  const user = await managed();
+  const other = await managed();
+  const p = await product(10);
+  const orders = [];
+  for (let i = 0; i < 2; i++) {
+    await cart(user.client, p);
+    orders.push(await ok(await checkout(user.client), 201));
+  }
+  await cart(user.client, p);
+  const review = await ok(await checkout(user.client), 201);
+  await ok(await req(user.client, `/api/orders/${review.id}/proof`, "POST", png));
+  await cart(other.client, p);
+  const otherOrder = await ok(await checkout(other.client), 201);
+  assert.equal(await stock(p), 6);
+  const blockPath = `/api/users/${user.client.id}/block`;
+  await ok(await req(user.client, blockPath, "POST", {}), 403);
+  await ok(await req(staff, `/api/users/${owner.id}/block`, "POST", {}), 403);
+  await ok(await req(owner, `/api/users/${staff.id}/unblock`, "POST", {}), 403);
+  await ok(await req(staff, "/api/users/missing/block", "POST", {}), 404);
+  await db.prepare("CREATE TRIGGER test_block_failure BEFORE UPDATE OF status ON orders WHEN NEW.status='cancelled' BEGIN SELECT RAISE(ABORT,'TEST_BLOCK_FAILURE'); END;").run();
+  try {
+    await ok(await req(staff, blockPath, "POST", {}), 500);
+    assert.equal(await db.prepare("SELECT is_blocked FROM users WHERE id=?").bind(user.client.id).first("is_blocked"), 0);
+    assert.equal((await ok(await req(user.client, "/api/me"))).user.id, user.client.id);
+    assert.equal(await stock(p), 6);
+  } finally {
+    await db.prepare("DROP TRIGGER test_block_failure").run();
+  }
+  await ok(await req(staff, blockPath, "POST", {}));
+  await ok(await req(staff, blockPath, "POST", {}));
+  assert.equal(await stock(p), 8);
+  const blockAudit = await db.prepare("SELECT details FROM audit_log WHERE action='user_blocked' AND target_id=?").bind(user.client.id).first<{ details: string }>();
+  assert.deepEqual(JSON.parse(blockAudit!.details), { before: { is_blocked: 0 }, after: { is_blocked: 1, cancelled_orders: 2 } });
+  for (const order of orders) {
+    const detail = await ok(await req(staff, `/api/orders/${order.id}`));
+    assert.equal(detail.status, "cancelled");
+    assert.equal(detail.reason, "Akun pelanggan diblokir.");
+    const events = detail.events.filter((e: any) => e.status === "cancelled");
+    assert.equal(events.length, 1);
+    assert.equal(events[0].actor_id, staff.id);
+    assert.equal(events[0].note, detail.reason);
+  }
+  assert.equal((await ok(await req(staff, `/api/orders/${review.id}`))).status, "review");
+  assert.equal((await ok(await req(staff, `/api/orders/${otherOrder.id}`))).status, "pending");
+  assert.equal((await ok(await req(user.client, "/api/me"))).user, null);
+  await ok(await checkout(user.client), 401);
+  await ok(await req(user.client, `/api/orders/${orders[0].id}/proof`, "POST", png), 401);
+  assert.equal(await db.prepare("SELECT COUNT(*) n FROM sessions WHERE user_id=?").bind(user.client.id).first("n"), 0);
+  const login = await ok(await req(null, "/api/login", "POST", { username: user.username, password }, { "cf-connecting-ip": crypto.randomUUID() }), 403);
+  assert.match(login.error, /^Akun diblokir\./);
+  await ok(await req(staff, `/api/users/${user.client.id}/reset`, "POST", {}), 403);
+  const blocked = await ok(await req(staff, `/api/users?q=${user.username}&status=blocked`));
+  assert.equal(blocked[0].is_blocked, 1);
+  assert.equal((await ok(await req(staff, `/api/users?q=${user.username}&status=active`))).length, 0);
+  await ok(await req(owner, `/api/users/${user.client.id}/unblock`, "POST", {}));
+  await ok(await req(owner, `/api/users/${user.client.id}/unblock`, "POST", {}));
+  await loginAs(user.username, password);
+  assert.equal(await stock(p), 8);
+  assert.equal((await ok(await req(staff, `/api/orders/${orders[0].id}`))).status, "cancelled");
+});
+
+test("blocking invalidates reset and activation links permanently across unblock", async () => {
+  const user = await managed();
+  const reset = await ok(await req(staff, `/api/users/${user.client.id}/reset`, "POST", {}));
+  await ok(await req(staff, `/api/users/${user.client.id}/block`, "POST", {}));
+  const token = new URLSearchParams(new URL(reset.url).hash.slice(1)).get("token");
+  await ok(await req(null, "/api/password-links/validate", "POST", { token }, { "cf-connecting-ip": crypto.randomUUID() }), 400);
+  await ok(await activate(reset), 400);
+  await ok(await req(staff, `/api/users/${user.client.id}/unblock`, "POST", {}));
+  await ok(await activate(reset), 400);
+  assert.equal(await db.prepare("SELECT status FROM users WHERE id=?").bind(user.client.id).first("status"), "reset_required");
+  const fresh = await ok(await req(staff, `/api/users/${user.client.id}/reset`, "POST", {}));
+  await ok(await activate(fresh));
+  await loginAs(user.username, password);
+  const username = "blocked_new_" + crypto.randomUUID().slice(0, 8);
+  const pending = await ok(await req(owner, "/api/users", "POST", { username, role: "buyer" }), 201);
+  await ok(await req(owner, `/api/users/${pending.id}/block`, "POST", {}));
+  await ok(await activate(pending), 400);
+  await ok(await req(staff, `/api/users/${pending.id}/reset`, "POST", {}), 403);
+  await ok(await req(staff, `/api/users/${pending.id}/unblock`, "POST", {}));
+  assert.equal(await db.prepare("SELECT status FROM users WHERE id=?").bind(pending.id).first("status"), "pending");
+  const activation = await ok(await req(staff, `/api/users/${pending.id}/reset`, "POST", {}));
+  await ok(await activate(activation));
+});
+
+test("concurrent block, checkout and login leave no pending reservations or usable sessions", async () => {
+  await cleanCart();
+  const user = await managed();
+  const p = await product(1);
+  await cart(user.client, p);
+  const [orderResponse, loginResponse, blockResponse] = await Promise.all([
+    checkout(user.client),
+    req(null, "/api/login", "POST", { username: user.username, password }, { "cf-connecting-ip": crypto.randomUUID() }),
+    req(staff, `/api/users/${user.client.id}/block`, "POST", {}),
+  ]);
+  await ok(blockResponse);
+  assert.ok([201, 401].includes(orderResponse.status));
+  assert.ok([200, 403].includes(loginResponse.status));
+  assert.equal(await stock(p), 1);
+  assert.equal(await db.prepare("SELECT COUNT(*) n FROM orders WHERE user_id=? AND status='pending'").bind(user.client.id).first("n"), 0);
+  assert.equal(await db.prepare("SELECT COUNT(*) n FROM sessions WHERE user_id=?").bind(user.client.id).first("n"), 0);
+  if (orderResponse.status === 201) {
+    const order = await ok(orderResponse, 201);
+    assert.equal((await ok(await req(staff, `/api/orders/${order.id}`))).status, "cancelled");
+  }
+  const row = await db.prepare("SELECT revision FROM products WHERE id=?").bind(p).first<{ revision: number }>();
+  await ok(await req(owner, `/api/products/${p}`, "DELETE", { revision: row!.revision }));
+  assert.deepEqual((await db.prepare("PRAGMA foreign_key_check").all()).results, []);
+});

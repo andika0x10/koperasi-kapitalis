@@ -147,7 +147,7 @@ export class Commerce extends DurableObject<Env> {
       const tokenHash = await digest(data.token);
       await limit(this.env, `password-link:token:${tokenHash}`, 10, 15 * 60000);
       const link = await db
-        .prepare("SELECT u.id,u.username,u.status,p.expires_at FROM password_links p JOIN users u ON u.id=p.user_id WHERE p.token_hash=? AND p.expires_at>?")
+        .prepare("SELECT u.id,u.username,u.status,p.expires_at FROM password_links p JOIN users u ON u.id=p.user_id WHERE u.is_blocked=0 AND p.token_hash=? AND p.expires_at>?")
         .bind(tokenHash, Date.now())
         .first<{ id: string; username: string; status: string; expires_at: number }>();
       if (!link) throw new HttpError(400, "Link sudah kedaluwarsa, digunakan, atau dibatalkan. Minta link baru kepada staf (pelanggan) atau owner (staf).");
@@ -157,7 +157,7 @@ export class Commerce extends DurableObject<Env> {
       await db.batch([
         db
           .prepare(
-            "UPDATE users SET password_hash=?,status='active' WHERE id=? AND EXISTS(SELECT 1 FROM password_links WHERE user_id=users.id AND token_hash=? AND expires_at>CAST(unixepoch('subsec')*1000 AS INTEGER))"
+            "UPDATE users SET password_hash=?,status='active' WHERE id=? AND is_blocked=0 AND EXISTS(SELECT 1 FROM password_links WHERE user_id=users.id AND token_hash=? AND expires_at>CAST(unixepoch('subsec')*1000 AS INTEGER))"
           )
           .bind(hash, link.id, tokenHash),
         // Abort the entire batch if CLI recovery replaced the token during hashing.
@@ -178,31 +178,33 @@ export class Commerce extends DurableObject<Env> {
       await limit(this.env, `auth:ip:${ip}`, 30, 15 * 60000);
       await limit(this.env, `auth:user:${name}`, 10, 15 * 60000);
       let user = await db
-        .prepare("SELECT id,username,password_hash,status FROM users WHERE username=?")
+        .prepare("SELECT id,username,password_hash,status,is_blocked FROM users WHERE username=?")
         .bind(name)
-        .first<{ id: string; username: string; password_hash: string | null; status: string }>();
+        .first<{ id: string; username: string; password_hash: string | null; status: string; is_blocked: number }>();
       const statements: D1PreparedStatement[] = [];
       if (path === "/api/register") {
         if (user) throw new HttpError(409, "Username sudah digunakan.");
         await limit(this.env, `register:${ip}`, 5, 3600000);
         const id = crypto.randomUUID(),
           hash = await hashPassword(data.password);
-        user = { id, username: name, password_hash: hash, status: "active" };
+        user = { id, username: name, password_hash: hash, status: "active", is_blocked: 0 };
         statements.push(db.prepare("INSERT INTO users(id,username,password_hash,role,created_at) VALUES(?,?,?,'buyer',?)").bind(id, name, hash, Date.now()));
         statements.push(audit(db, user, "registered", id, "user", { after: { username: name, role: "buyer" } }));
       } else {
         const verified = user?.password_hash ? await verifyPassword(data.password, user.password_hash) : (await hashPassword(data.password, "0".repeat(64)), false);
-        if (!verified || !user || user.status !== "active")
-          throw new HttpError(401, "Username atau password salah. Jika akun sedang direset, gunakan link dari staf (pelanggan) atau owner (staf).");
+        if (user?.is_blocked) throw new HttpError(403, "Akun diblokir. Hubungi staf untuk membuka blokir.");
+        if (user?.status === "reset_required") throw new HttpError(401, "Akun sedang direset. Gunakan link dari staf (pelanggan) atau owner (staf) untuk mengatur password baru.");
+        if (user?.status === "pending") throw new HttpError(401, "Akun belum aktif. Gunakan link aktivasi dari staf (pelanggan) atau owner (staf).");
+        if (!verified || !user) throw new HttpError(401, "Username atau password salah.");
       }
       statements.push(audit(db, user!, "login", user!.id, "user"));
       const token = await createSession(this.env, request, user!.id, statements);
       // CLI recovery writes directly to D1, outside the coordinator queue.
       const current = await db
-        .prepare("SELECT password_hash,username,status FROM users WHERE id=?")
+        .prepare("SELECT password_hash,username,status,is_blocked FROM users WHERE id=?")
         .bind(user!.id)
-        .first<{ password_hash: string; username: string; status: string }>();
-      if (!current || current.password_hash !== user!.password_hash || current.username !== name || current.status !== "active") {
+        .first<{ password_hash: string; username: string; status: string; is_blocked: number }>();
+      if (!current || current.password_hash !== user!.password_hash || current.username !== name || current.status !== "active" || current.is_blocked) {
         await db
           .prepare("DELETE FROM sessions WHERE token_hash=?")
           .bind(await digest(token))
@@ -473,7 +475,7 @@ export class Commerce extends DurableObject<Env> {
       if (integer(data.revision, "Versi barang") !== previous.revision) throw new HttpError(409, "Barang berubah. Muat ulang sebelum menghapus.");
       const blockers = await db
         .prepare(
-          "SELECT o.id FROM orders o JOIN order_items i ON i.order_id=o.id WHERE i.product_id=? AND o.status NOT IN ('completed','rejected','expired') ORDER BY o.created_at"
+          "SELECT o.id FROM orders o JOIN order_items i ON i.order_id=o.id WHERE i.product_id=? AND o.status NOT IN ('completed','rejected','expired','cancelled') ORDER BY o.created_at"
         )
         .bind(id)
         .all<{ id: string }>();
@@ -587,16 +589,50 @@ export class Commerce extends DurableObject<Env> {
       }
       return json({ ok: true });
     }
+    const blocking = path.match(/^\/api\/users\/([^/]+)\/(block|unblock)$/);
+    if (blocking && method === "POST") {
+      role(auth, "owner", "staff");
+      const user = await db.prepare("SELECT id,role,is_blocked FROM users WHERE id=?").bind(blocking[1]).first<{ id: string; role: string; is_blocked: number }>();
+      if (!user) throw new HttpError(404, "Pengguna tidak ditemukan.");
+      if (user.role !== "buyer") throw new HttpError(403, "Hanya akun pelanggan yang dapat diblokir.");
+      const blocked = blocking[2] === "block" ? 1 : 0;
+      if (user.is_blocked === blocked) return json({ ok: true });
+      const pending = blocked ? (await db.prepare("SELECT id FROM orders WHERE user_id=? AND status='pending'").bind(user.id).all<{ id: string }>()).results : [];
+      await db.batch([
+        db.prepare("UPDATE users SET is_blocked=? WHERE id=?").bind(blocked, user.id),
+        ...(blocked
+          ? [
+              db.prepare("DELETE FROM sessions WHERE user_id=?").bind(user.id),
+              db.prepare("DELETE FROM password_links WHERE user_id=?").bind(user.id),
+              db
+                .prepare("UPDATE orders SET status='cancelled',reason='Akun pelanggan diblokir.',decided_at=?,event_actor_id=? WHERE user_id=? AND status='pending'")
+                .bind(Date.now(), auth.id, user.id),
+              ...pending.map((order) =>
+                audit(db, auth, "order_cancelled", order.id, "order", { before: { status: "pending" }, after: { status: "cancelled" }, reason: "Akun pelanggan diblokir." })
+              ),
+            ]
+          : []),
+        this.audit(auth, blocked ? "user_blocked" : "user_unblocked", user.id, {
+          before: { is_blocked: user.is_blocked },
+          after: { is_blocked: blocked, cancelled_orders: pending.length },
+        }),
+      ]);
+      return json({ ok: true });
+    }
     const reset = path.match(/^\/api\/users\/([^/]+)\/reset$/);
     if (reset && method === "POST") {
       role(auth, "owner", "staff");
       if (reset[1] === auth.id) throw new HttpError(400, "Ganti password sendiri melalui Pengaturan.");
-      const user = await db.prepare("SELECT id,username,role FROM users WHERE id=?").bind(reset[1]).first<{ id: string; username: string; role: string }>();
+      const user = await db
+        .prepare("SELECT id,username,role,is_blocked FROM users WHERE id=?")
+        .bind(reset[1])
+        .first<{ id: string; username: string; role: string; is_blocked: number }>();
       if (!user) throw new HttpError(404, "Pengguna aktif tidak ditemukan.");
       if (user.role === "owner") throw new HttpError(403, "Pemulihan owner dilakukan melalui CLI.");
       if (!((auth.role === "staff" && user.role === "buyer") || (auth.role === "owner" && user.role === "staff")))
         throw new HttpError(403, "Reset pelanggan dilakukan oleh staf; reset staf dilakukan oleh owner.");
       await limit(this.env, `reset-issue:${auth.id}`, 30, 15 * 60000);
+      if (user.is_blocked) throw new HttpError(403, "Akun diblokir. Buka blokir sebelum membuat link reset password.");
       const link = await newPasswordLink(db, user.id, user.username, new URL(request.url).origin);
       await db.batch([...link.statements, this.audit(auth, "password_link_issued", reset[1], { username: user.username, expires_at: link.result.expires_at })]);
       return json(link.result);

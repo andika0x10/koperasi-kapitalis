@@ -52,11 +52,12 @@ export function Users({ customersOnly = false }: { customersOnly?: boolean }) {
     [creating, setCreating] = useState<"staff" | "buyer" | null>(null),
     [link, setLink] = useState<PasswordLink | null>(null),
     [deleting, setDeleting] = useState<User | null>(null),
+    [blocking, setBlocking] = useState<User | null>(null),
     [resetting, setResetting] = useState<User | null>(null);
   const { data, error, loading } = useData<(User & { created_at: number })[]>(
     `/api/users?q=${encodeURIComponent(q)}&role=${customersOnly ? "buyer" : role}&status=${status}&page=${page}`
   );
-  const labels = { pending: "Menunggu aktivasi", active: "Aktif", reset_required: "Menunggu password baru" };
+  const labels = { pending: "Menunggu aktivasi", active: "Aktif", reset_required: "Menunggu password baru", blocked: "Diblokir" };
   return (
     <>
       <div className="page-heading">
@@ -143,15 +144,22 @@ export function Users({ customersOnly = false }: { customersOnly?: boolean }) {
                     </td>
                     <td data-label="Peran">{roleLabel[u.role]}</td>
                     <td data-label="Status akun">
-                      <span className={"status " + (u.status === "active" ? "approved" : "pending")}>{labels[u.status]}</span>
+                      <span className={"status " + (u.is_blocked ? "rejected" : u.status === "active" ? "approved" : "pending")}>
+                        {u.is_blocked ? labels.blocked : labels[u.status]}
+                      </span>
                     </td>
                     <td data-label="Dibuat">{date(u.created_at)}</td>
                     <td data-label="Tindakan">
                       {u.role !== "owner" ? (
                         <div className="button-row">
-                          {(customersOnly ? u.role === "buyer" : u.role === "staff") && (
+                          {!u.is_blocked && (customersOnly ? u.role === "buyer" : u.role === "staff") && (
                             <button className="text-button" onClick={() => setResetting(u)}>
                               {u.status === "pending" ? "Buat link aktivasi" : "Buat link reset"}
+                            </button>
+                          )}
+                          {u.role === "buyer" && (
+                            <button className={"text-button" + (u.is_blocked ? "" : " danger-text")} onClick={() => setBlocking(u)}>
+                              {u.is_blocked ? "Buka blokir" : "Blokir"}
                             </button>
                           )}
                           {!customersOnly && (
@@ -194,6 +202,35 @@ export function Users({ customersOnly = false }: { customersOnly?: boolean }) {
             <Field label="Username" hint="3–32 huruf kecil, angka, atau garis bawah.">
               <input name="username" required autoFocus autoCapitalize="none" spellCheck={false} minLength={3} maxLength={32} pattern="[a-zA-Z0-9_]{3,32}" />
             </Field>
+          </ActionForm>
+        </Overlay>
+      )}
+      {blocking && (
+        <Overlay open onClose={() => setBlocking(null)} title={blocking.is_blocked ? "Buka blokir pelanggan" : "Blokir pelanggan"}>
+          <p>
+            {blocking.is_blocked ? (
+              <>
+                Buka blokir <strong>{blocking.username}</strong>? Pelanggan dapat masuk kembali setelah password siap digunakan. Pesanan yang dibatalkan tetap dibatalkan.
+              </>
+            ) : (
+              <>
+                Blokir <strong>{blocking.username}</strong>? Seluruh sesi dan link password akan dicabut. Pesanan yang masih menunggu pembayaran otomatis dibatalkan dan stok
+                dikembalikan.
+              </>
+            )}
+          </p>
+          <ActionForm
+            label={blocking.is_blocked ? "Buka blokir" : "Blokir pelanggan"}
+            onSubmit={async () => {
+              await api(`/api/users/${blocking.id}/${blocking.is_blocked ? "unblock" : "block"}`, "POST", {});
+              notify(blocking.is_blocked ? "Blokir pelanggan dibuka." : "Pelanggan diblokir. Pesanan pending dibatalkan.");
+              setBlocking(null);
+              changed();
+            }}
+          >
+            <button type="button" className="button secondary" onClick={() => setBlocking(null)}>
+              Batal
+            </button>
           </ActionForm>
         </Overlay>
       )}
