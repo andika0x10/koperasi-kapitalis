@@ -12,6 +12,7 @@ const products = [
 ].map((product) => ({ ...product, description: "Kebutuhan harian keluarga.", revision: 1 }));
 
 async function fixture(page: Page, role: Role, single = false) {
+  let loggedOut = false;
   await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path.startsWith("/api/attachments/")) {
@@ -24,12 +25,18 @@ async function fixture(page: Page, role: Role, single = false) {
     }
     if (path === "/api/me")
       return route.fulfill({
-        json: { user: role === "public" ? null : { id: role, username: role === "buyer" ? "pelanggan" : role, role, status: "active", created_at: 0 }, csrf: "catalog-test" },
+        json: {
+          user: role === "public" || loggedOut ? null : { id: role, username: role === "buyer" ? "pelanggan" : role, role, status: "active", created_at: 0 },
+          csrf: "catalog-test",
+        },
       });
     if (path === "/api/products") return route.fulfill({ json: { products: single ? products.slice(0, 1) : products, categories: ["Bahan pokok", "Dapur", "Rumah tangga"] } });
     if (path === "/api/cart") return route.fulfill({ json: [] });
     if (path === "/api/sessions") return route.fulfill({ json: [] });
-    if (path === "/api/logout") return route.fulfill({ json: {} });
+    if (path === "/api/logout") {
+      loggedOut = true;
+      return route.fulfill({ json: {} });
+    }
     throw new Error(`API katalog yang belum dimock: ${path}`);
   });
 }
@@ -124,7 +131,7 @@ for (const role of ["staff", "owner"] as const) {
     const sidebar = page.locator(".management-sidebar");
     const destinations = await sidebar.locator("a").evaluateAll((links) => links.map((link) => ({ text: link.textContent?.trim(), href: link.getAttribute("href") })));
     expect(destinations.map((link) => link.text)).toEqual(
-      role === "owner" ? ["Statistik", "Pesanan", "Produk", "Pengguna", "Log aktivitas", "Lihat katalog", "Pengaturan"] : ["Pesanan", "Produk", "Lihat katalog", "Pengaturan"]
+      role === "owner" ? ["Statistik", "Pesanan", "Produk", "Pengguna", "Log aktivitas", "Pengaturan"] : ["Pesanan", "Produk", "Pelanggan", "Pengaturan"]
     );
     for (const width of [320, 390, 768, 850, 1149]) {
       await page.setViewportSize({ width, height: 900 });
@@ -137,7 +144,7 @@ for (const role of ["staff", "owner"] as const) {
         .evaluateAll((links) => links.map((link) => ({ top: link.getBoundingClientRect().top, bottom: link.getBoundingClientRect().bottom })));
       for (let index = 1; index < positions.length; index++) expect(positions[index].top).toBeGreaterThanOrEqual(positions[index - 1].bottom - 1);
       await expect(menu.getByRole("link", { name: "Pengaturan", exact: true })).toHaveCount(1);
-      await expect(menu.locator(".sidebar-avatar")).toHaveText(role[0].toUpperCase());
+      await expect(menu.locator(".sidebar-avatar")).toHaveText("");
       await expect(menu.getByRole("button", { name: "Keluar", exact: true })).toBeVisible();
       expect(await menu.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
       if (width === 390) await expect(menu).toHaveScreenshot(`navigation-${role}-390.png`, { animations: "disabled" });

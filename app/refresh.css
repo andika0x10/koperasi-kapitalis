@@ -840,3 +840,41 @@ tbody td {
     animation: none !important;
   }
 }
+
+/* Keep dismiss controls independent of wrapped message and heading lengths. */
+.toast {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px;
+  align-items: start;
+  padding: 8px 8px 8px 18px;
+  gap: 12px;
+}
+.toast > span {
+  align-self: center;
+  padding-block: 6px;
+}
+.toast > button {
+  width: 44px;
+  height: 44px;
+  justify-self: end;
+}
+.overlay .modal-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px;
+  align-items: start;
+}
+.modal-header > button {
+  justify-self: end;
+}
+.sidebar-avatar {
+  background: linear-gradient(135deg, #ff6f12, #ffd2a8);
+}
+
+.purchase-order-status {
+  margin-top: 32px;
+}
+.purchase-order-status .operational-counts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  column-gap: 32px;
+}

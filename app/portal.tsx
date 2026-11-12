@@ -155,6 +155,8 @@ function Screen({ path }: { path: string }) {
       </Empty>
     );
   if (path === "/kelola/pesanan" || path === "/kelola") return <Orders operator />;
+  if (path === "/kelola/pelanggan" && me.user.role === "staff") return <Users customersOnly />;
+  if (path === "/statistik" && me.user.role === "buyer") return <SalesReport purchases />;
   if (path === "/kelola/produk") return <ManageProducts />;
   if (path === "/owner/statistik") return <SalesReport />;
   if (path === "/keranjang" && me.user.role === "buyer") return <CartPage />;

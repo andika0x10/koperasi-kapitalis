@@ -3,7 +3,7 @@ import { authenticate, role, unlocked } from "./auth";
 import { json, failure } from "./http";
 import { HttpError } from "./security";
 import { auditLogs, pageNumber } from "./audit";
-import { salesReport } from "./reports";
+import { salesReport, purchaseReport } from "./reports";
 import type { Order } from "./types";
 import { productPhotos } from "./products";
 
@@ -76,6 +76,12 @@ export async function api(request: Request, env: Env): Promise<Response> {
       if (!expired.ok) throw new HttpError(503, "Status pesanan belum tersedia. Coba lagi.");
       return json(await salesReport(db, url));
     }
+    if (path === "/api/reports/purchases") {
+      role(auth, "buyer");
+      const expired = await env.COMMERCE.get(env.COMMERCE.idFromName("store")).fetch("https://internal/internal/expire");
+      if (!expired.ok) throw new HttpError(503, "Status pesanan belum tersedia. Coba lagi.");
+      return json(await purchaseReport(db, url, auth.id));
+    }
     if (path === "/api/cart") {
       role(auth, "buyer");
       return json(
@@ -113,9 +119,9 @@ export async function api(request: Request, env: Env): Promise<Response> {
       return json({ ...order, items: items.results, events: events.results });
     }
     if (path === "/api/users") {
-      role(auth, "owner");
+      role(auth, "owner", "staff");
       const q = (url.searchParams.get("q") || "").slice(0, 32),
-        filter = url.searchParams.get("role") || "",
+        filter = auth.role === "staff" ? "buyer" : url.searchParams.get("role") || "",
         status = url.searchParams.get("status") || "";
       if (!["", "buyer", "staff", "owner"].includes(filter) || !["", "active", "pending", "reset_required"].includes(status)) throw new HttpError(400, "Filter tidak valid.");
       return json(

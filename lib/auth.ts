@@ -24,7 +24,7 @@ export function csrf(request: Request, auth: Auth) {
   if (request.headers.get("x-csrf-token") !== auth.csrf) throw new HttpError(403, "Sesi formulir tidak valid. Muat ulang halaman.");
 }
 export function unlocked(auth: Auth) {
-  if (auth.status !== "active") throw new HttpError(403, "Atur password melalui link dari owner terlebih dahulu.");
+  if (auth.status !== "active") throw new HttpError(403, "Atur password melalui link dari staf (pelanggan) atau owner (staf) terlebih dahulu.");
 }
 export function role(auth: Auth, ...values: import("./types").Role[]) {
   if (!values.includes(auth.role)) throw new HttpError(403, "Anda tidak memiliki akses.");

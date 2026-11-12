@@ -9,6 +9,7 @@ let mf: Miniflare, db: D1Database;
 const base = "https://koperasi.test",
   password = "test-password-123";
 type Client = { cookie: string; csrf: string; id: string };
+const staff: Client = { id: "staff-reset", cookie: "kk_session=" + "4".repeat(64), csrf: "staff-csrf" };
 const owner: Client = { id: "owner", cookie: "kk_session=" + "1".repeat(64), csrf: "owner-csrf" },
   a: Client = { id: "buyer-a", cookie: "kk_session=" + "2".repeat(64), csrf: "a-csrf" },
   b: Client = { id: "buyer-b", cookie: "kk_session=" + "3".repeat(64), csrf: "b-csrf" };
@@ -95,10 +96,10 @@ before(async () => {
   assert.equal(statement, "");
   const hash = await hashPassword(password),
     now = Date.now();
-  for (const c of [owner, a, b]) {
+  for (const c of [owner, a, b, staff]) {
     await db
       .prepare("INSERT INTO users(id,username,password_hash,role,created_at) VALUES(?,?,?,?,?)")
-      .bind(c.id, c.id, hash, c === owner ? "owner" : "buyer", now)
+      .bind(c.id, c.id, hash, c === owner ? "owner" : c === staff ? "staff" : "buyer", now)
       .run();
     await db
       .prepare("INSERT INTO sessions(id,user_id,token_hash,csrf,device,created_at,last_seen,expires_at) VALUES(?,?,?,?,?,?,?,?)")
@@ -380,13 +381,32 @@ test("sales reports: WIB boundaries, approval date, snapshots, exclusions and pa
   await ok(await req(owner, "/api/orders/report-0/ship", "POST", { courier: "Kurir laporan" }));
   await ok(await req(owner, "/api/orders/report-0/complete", "POST", {}));
   assert.deepEqual((await ok(await req(owner, path))).summary, report.summary);
+  const purchases = path.replace("sales", "purchases");
+  const personal = await ok(await req(a, purchases));
+  assert.deepEqual(personal.summary, report.summary);
+  assert.deepEqual(personal.daily, report.daily);
+  assert.deepEqual(personal.products, report.products);
+  assert.equal(personal.operations, undefined);
+  assert.equal(personal.transactions.length, 30);
+  assert.equal((await ok(await req(a, purchases + "&page=1"))).transactions.length, 5);
+  assert.equal((await ok(await req(b, purchases + "&user_id=" + a.id))).summary.orders, 0);
+  assert.deepEqual((await ok(await req(b, purchases))).transactions, []);
+  assert.equal((await ok(await req(a, "/api/reports/purchases?from=2025-11-30&to=2025-11-30"))).summary.orders, 1);
+  assert.equal(
+    personal.orders.find((o: any) => o.status === "rejected").count,
+    (await db.prepare("SELECT COUNT(*) count FROM orders WHERE user_id=? AND status='rejected'").bind(a.id).first<any>()).count
+  );
+  for (const client of [owner, staff]) await ok(await req(client, purchases), 403);
+  await ok(await req(null, purchases), 401);
+  for (const suffix of ["&page=-1", "&page=1.5"]) await ok(await req(a, purchases + suffix), 400);
+  await ok(await req(a, "/api/reports/purchases?from=2025-02-30&to=2025-03-01"), 400);
   const singleDay = await ok(await req(owner, "/api/reports/sales?from=2025-11-30&to=2025-11-30"));
   assert.equal(singleDay.summary.orders, 1);
 });
 
 test("password links immediately lock credentials, revoke sessions and allow one-time reset", async () => {
   await db.prepare("UPDATE users SET username='buyer_b' WHERE id=?").bind(b.id).run();
-  const reset = await ok(await req(owner, "/api/users/" + b.id + "/reset", "POST", {}));
+  const reset = await ok(await req(staff, "/api/users/" + b.id + "/reset", "POST", {}));
   assert.equal(reset.password, undefined);
   await ok(await req(b, "/api/sessions"), 401);
   await ok(await req(null, "/api/login", "POST", { username: "buyer_b", password }, { "cf-connecting-ip": crypto.randomUUID() }), 401);
@@ -443,7 +463,7 @@ test("multiple staff, owner-only management, immutable roles and restricted paym
   await ok(await req(null, "/api/login", "POST", { username, password }, { "cf-connecting-ip": crypto.randomUUID() }), 401);
   await ok(await activate(created));
   const client = await loginAs(username, password);
-  for (const path of ["/api/users", "/api/audit-logs", "/api/reports/sales?from=2026-01-01&to=2026-12-31"]) await ok(await req(client, path), 403);
+  for (const path of ["/api/audit-logs", "/api/reports/sales?from=2026-01-01&to=2026-12-31"]) await ok(await req(client, path), 403);
   await ok(await req(client, "/api/orders"));
   await ok(await req(client, "/api/products?all=1"));
   await ok(await req(client, "/api/users", "POST", { username: "illegal_user", role: "buyer" }), 403);
@@ -612,7 +632,7 @@ test("concurrent login with password reset revokes old credentials and sessions"
   const user = await managed();
   const results = await Promise.all([
     req(null, "/api/login", "POST", { username: user.username, password }, { "cf-connecting-ip": crypto.randomUUID() }),
-    req(owner, "/api/users/" + user.client.id + "/reset", "POST", {}),
+    req(staff, "/api/users/" + user.client.id + "/reset", "POST", {}),
   ]);
   const reset = await ok(results[1]);
   if (results[0].status === 200) {
@@ -627,7 +647,7 @@ test("concurrent login with password reset revokes old credentials and sessions"
 
 test("link expiry, replacement, concurrent consumption, deletion and secret-free audit", async () => {
   const user = await managed();
-  const reset = await ok(await req(owner, "/api/users/" + user.client.id + "/reset", "POST", {}));
+  const reset = await ok(await req(staff, "/api/users/" + user.client.id + "/reset", "POST", {}));
   const token = new URLSearchParams(new URL(reset.url).hash.slice(1)).get("token")!;
   assert.ok(reset.expires_at > Date.now() + 3590000 && reset.expires_at <= Date.now() + 3600000);
   const stored = await db.prepare("SELECT token_hash FROM password_links WHERE user_id=?").bind(user.client.id).first<any>();
@@ -638,12 +658,12 @@ test("link expiry, replacement, concurrent consumption, deletion and secret-free
   await db.prepare("UPDATE password_links SET expires_at=? WHERE user_id=?").bind(Date.now(), user.client.id).run();
   await ok(await activate(reset), 400);
   assert.equal((await db.prepare("SELECT status,password_hash FROM users WHERE id=?").bind(user.client.id).first<any>()).password_hash, null);
-  const replacement = await ok(await req(owner, "/api/users/" + user.client.id + "/reset", "POST", {}));
+  const replacement = await ok(await req(staff, "/api/users/" + user.client.id + "/reset", "POST", {}));
   await ok(await activate(reset), 400);
   const results = await Promise.all([activate(replacement), activate(replacement)]);
   assert.deepEqual(results.map((r) => r.status).sort(), [200, 400]);
   const client = await loginAs(user.username, password);
-  const invalidated = await ok(await req(owner, "/api/users/" + client.id + "/reset", "POST", {}));
+  const invalidated = await ok(await req(staff, "/api/users/" + client.id + "/reset", "POST", {}));
   await ok(await req(owner, "/api/users/" + client.id, "DELETE"));
   await ok(await activate(invalidated), 400);
   const log = JSON.stringify((await db.prepare("SELECT * FROM audit_log").all()).results);
@@ -787,4 +807,22 @@ test("audits cover mutations, safe retries and automatic expiry with an idle dai
   await db.prepare("UPDATE orders SET expires_at=1 WHERE status='pending'").run();
   const alarm = (await (await coordinator.fetch("https://internal/__test/alarm")).json()) as { scheduledAt: number };
   assert.ok(alarm.scheduledAt > Date.now() + 23 * 3600000);
+});
+
+test("reset permissions and staff user lists cannot escape customer boundaries", async () => {
+  const buyer = await managed();
+  const operator = await managed("staff");
+  for (const query of ["", "?role=staff", "?role=owner", "?role=buyer", "?role=bad", "?q=" + operator.username]) {
+    const users = await ok(await req(staff, "/api/users" + query));
+    assert.ok(users.every((u: any) => u.role === "buyer"));
+  }
+  await ok(await req(owner, "/api/users/" + buyer.client.id + "/reset", "POST", {}), 403);
+  await ok(await req(staff, "/api/users/" + operator.client.id + "/reset", "POST", {}), 403);
+  await ok(await req(staff, "/api/users/" + owner.id + "/reset", "POST", {}), 403);
+  await ok(await req(buyer.client, "/api/users/" + operator.client.id + "/reset", "POST", {}), 403);
+  const link = await ok(await req(staff, "/api/users/" + buyer.client.id + "/reset", "POST", {}));
+  await ok(await req(buyer.client, "/api/orders"), 401);
+  await ok(await activate(link));
+  await ok(await activate(link), 400);
+  await ok(await req(owner, "/api/users/" + operator.client.id + "/reset", "POST", {}));
 });

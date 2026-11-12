@@ -105,3 +105,12 @@ export interface SalesReportData {
     accounts: { role: Role; status: AccountStatus; count: number }[];
   };
 }
+
+export interface PurchaseReportData {
+  summary: SalesReportData["summary"];
+  daily: SalesReportData["daily"];
+  products: SalesReportData["products"];
+  transactions: SalesReportData["transactions"];
+  page: number;
+  orders: { status: Status; count: number }[];
+}

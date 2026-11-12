@@ -2,25 +2,27 @@
 import React, { useState } from "react";
 import Link from "next/link";
 import { money, date, roleLabel, statusLabel } from "../lib/types";
-import type { SalesReportData } from "../lib/types";
+import type { SalesReportData, PurchaseReportData } from "../lib/types";
 import { useData, ErrorBox, Loading, Empty, Pagination, StatusBadge, Field } from "./ui";
 function todayWib() {
   return new Date(Date.now() + 7 * 3600000).toISOString().slice(0, 10);
 }
-export function SalesReport() {
+export function SalesReport({ purchases = false }: { purchases?: boolean }) {
   const [today] = useState(todayWib),
     [period, setPeriod] = useState("month"),
     [from, setFrom] = useState(() => today.slice(0, 7) + "-01"),
     [to, setTo] = useState(today),
     [page, setPage] = useState(0);
   const valid = !!from && !!to && from <= to;
-  const { data, error, loading } = useData<SalesReportData>(valid ? `/api/reports/sales?from=${from}&to=${to}&page=${page}` : null);
+  const { data, error, loading } = useData<SalesReportData | PurchaseReportData>(
+    valid ? `/api/reports/${purchases ? "purchases" : "sales"}?from=${from}&to=${to}&page=${page}` : null
+  );
   const maximumDaily = data?.daily.reduce((maximum, day) => Math.max(maximum, day.total), 1) || 1;
   return (
     <>
       <div className="page-heading">
         <div>
-          <h1>Statistik toko</h1>
+          <h1>{purchases ? "Statistik belanja" : "Statistik toko"}</h1>
           <p>Pembayaran terverifikasi berdasarkan tanggal persetujuan dalam WIB.</p>
         </div>
       </div>
@@ -77,75 +79,77 @@ export function SalesReport() {
         <Loading />
       ) : (
         <>
-          <section className="operations-section">
-            <div className="section-heading">
-              <h2>Operasional saat ini</h2>
-              <span>Tidak mengikuti filter tanggal</span>
-            </div>
-            <div className="operations-grid">
-              <div>
-                <h3>Pesanan</h3>
-                <dl className="operational-counts">
-                  {Object.entries(statusLabel).map(([status, label]) => (
-                    <div key={status}>
-                      <dt>{label}</dt>
-                      <dd>{data.operations.orders.find((o) => o.status === status)?.count || 0}</dd>
-                    </div>
-                  ))}
-                </dl>
+          {!purchases && "operations" in data && (
+            <section className="operations-section">
+              <div className="section-heading">
+                <h2>Operasional saat ini</h2>
+                <span>Tidak mengikuti filter tanggal</span>
               </div>
-              <div>
-                <h3>Persediaan</h3>
-                <dl className="operational-counts">
-                  <div>
-                    <dt>Barang habis</dt>
-                    <dd>{data.operations.out_of_stock.length}</dd>
-                  </div>
-                  <div>
-                    <dt>Stok menipis (1–5)</dt>
-                    <dd>{data.operations.low_stock.length}</dd>
-                  </div>
-                </dl>
-                <details>
-                  <summary>Lihat barang yang perlu diisi</summary>
-                  <ul>
-                    {[...data.operations.out_of_stock, ...data.operations.low_stock].map((p) => (
-                      <li key={p.id}>
-                        <Link href="/kelola/produk">{p.name}</Link>
-                        <small>
-                          {p.stock} {p.unit}
-                        </small>
-                      </li>
+              <div className="operations-grid">
+                <div>
+                  <h3>Pesanan</h3>
+                  <dl className="operational-counts">
+                    {Object.entries(statusLabel).map(([status, label]) => (
+                      <div key={status}>
+                        <dt>{label}</dt>
+                        <dd>{data.operations.orders.find((o) => o.status === status)?.count || 0}</dd>
+                      </div>
                     ))}
-                  </ul>
-                </details>
-              </div>
-              <div>
-                <h3>Akun</h3>
-                <dl className="operational-counts">
-                  {Object.entries(roleLabel).map(([role, label]) => (
-                    <div key={role}>
-                      <dt>{label}</dt>
-                      <dd>{data.operations.accounts.filter((a) => a.role === role).reduce((n, a) => n + a.count, 0)}</dd>
+                  </dl>
+                </div>
+                <div>
+                  <h3>Persediaan</h3>
+                  <dl className="operational-counts">
+                    <div>
+                      <dt>Barang habis</dt>
+                      <dd>{data.operations.out_of_stock.length}</dd>
                     </div>
-                  ))}
-                </dl>
-                <p className="fine">Termasuk akun menunggu aktivasi atau password baru.</p>
+                    <div>
+                      <dt>Stok menipis (1–5)</dt>
+                      <dd>{data.operations.low_stock.length}</dd>
+                    </div>
+                  </dl>
+                  <details>
+                    <summary>Lihat barang yang perlu diisi</summary>
+                    <ul>
+                      {[...data.operations.out_of_stock, ...data.operations.low_stock].map((p) => (
+                        <li key={p.id}>
+                          <Link href="/kelola/produk">{p.name}</Link>
+                          <small>
+                            {p.stock} {p.unit}
+                          </small>
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                </div>
+                <div>
+                  <h3>Akun</h3>
+                  <dl className="operational-counts">
+                    {Object.entries(roleLabel).map(([role, label]) => (
+                      <div key={role}>
+                        <dt>{label}</dt>
+                        <dd>{data.operations.accounts.filter((a) => a.role === role).reduce((n, a) => n + a.count, 0)}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                  <p className="fine">Termasuk akun menunggu aktivasi atau password baru.</p>
+                </div>
               </div>
-            </div>
-          </section>
+            </section>
+          )}
           <div className="section-heading sales-heading">
-            <h2>Penjualan</h2>
+            <h2>{purchases ? "Belanja terverifikasi" : "Penjualan"}</h2>
             <span>
               {from} sampai {to}, WIB
             </span>
           </div>
           <dl className="report-summary">
             {[
-              ["Pembayaran terverifikasi", money(data.summary.total)],
-              ["Penjualan barang", money(data.summary.subtotal)],
+              [purchases ? "Total belanja termasuk ongkir" : "Pembayaran terverifikasi", money(data.summary.total)],
+              [purchases ? "Belanja barang" : "Penjualan barang", money(data.summary.subtotal)],
               ["Ongkir", money(data.summary.shipping_fee)],
-              ["Pesanan", data.summary.orders],
+              [purchases ? "Pesanan terverifikasi" : "Pesanan", data.summary.orders],
             ].map(([label, value]) => (
               <div key={label}>
                 <dt>{label}</dt>
@@ -154,14 +158,14 @@ export function SalesReport() {
             ))}
           </dl>
           {!data.summary.orders ? (
-            <Empty title="Belum ada penjualan pada periode ini">
+            <Empty title={purchases ? "Belum ada belanja terverifikasi pada periode ini" : "Belum ada penjualan pada periode ini"}>
               <p>Pembayaran yang disetujui akan muncul di sini. Coba periode lain.</p>
             </Empty>
           ) : (
             <>
               <div className="report-sections">
                 <section className="detail-section">
-                  <h2>Penjualan harian</h2>
+                  <h2>{purchases ? "Belanja harian" : "Penjualan harian"}</h2>
                   <div className="daily-trend">
                     {data.daily.map((row) => (
                       <div className="daily-row" key={row.day}>
@@ -178,7 +182,7 @@ export function SalesReport() {
                   </div>
                 </section>
                 <section className="detail-section">
-                  <h2>Produk terlaris</h2>
+                  <h2>{purchases ? "Produk paling sering dibeli" : "Produk terlaris"}</h2>
                   {data.products.map((p) => (
                     <div className="receipt-item" key={p.product_id + p.name + p.unit}>
                       <span>
@@ -208,7 +212,7 @@ export function SalesReport() {
                       {data.transactions.map((o) => (
                         <tr key={o.id}>
                           <td>
-                            <Link className="order-link" href={"/kelola/pesanan/" + o.id}>
+                            <Link className="order-link" href={(purchases ? "/pesanan/" : "/kelola/pesanan/") + o.id}>
                               {o.id.slice(0, 8)}
                             </Link>
                             <small>{o.recipient}</small>
@@ -226,6 +230,22 @@ export function SalesReport() {
                 <Pagination page={page} setPage={setPage} hasNext={(page + 1) * 30 < data.summary.orders} />
               </section>
             </>
+          )}
+          {purchases && "orders" in data && (
+            <section className="operations-section purchase-order-status">
+              <div className="section-heading">
+                <h2>Status pesanan saya</h2>
+                <span>Tidak mengikuti filter tanggal</span>
+              </div>
+              <dl className="operational-counts">
+                {Object.entries(statusLabel).map(([status, label]) => (
+                  <div key={status}>
+                    <dt>{label}</dt>
+                    <dd>{data.orders.find((o) => o.status === status)?.count || 0}</dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
           )}
         </>
       )}

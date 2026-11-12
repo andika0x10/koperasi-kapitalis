@@ -54,7 +54,7 @@ export function AuthPage({ register }: { register: boolean }) {
         <p className="auth-switch">
           {register ? "Sudah punya akun?" : "Belum punya akun?"} <Link href={register ? "/masuk" : "/daftar"}>{register ? "Masuk" : "Daftar sebagai pelanggan"}</Link>
         </p>
-        {!register && <p className="fine">Lupa password? Minta link reset password kepada owner. Link berlaku 1 jam.</p>}
+        {!register && <p className="fine">Lupa password? Minta link reset password kepada staf (pelanggan) atau owner (staf). Link berlaku 1 jam.</p>}
       </section>
     </div>
   );
@@ -71,7 +71,7 @@ export function SetPassword() {
     const value = new URLSearchParams(location.hash.slice(1)).get("token") || "";
     setToken(value);
     if (!value) {
-      setError("Link tidak lengkap. Minta link baru kepada owner.");
+      setError("Link tidak lengkap. Minta link baru kepada staf (pelanggan) atau owner (staf).");
       setLoading(false);
       return;
     }

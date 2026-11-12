@@ -101,13 +101,14 @@ async function fixture(page: Page, role: "public" | "buyer" | "owner" | "staff",
     else if (/^\/api\/users\/[^/]+\/reset$/.test(path))
       data = { username: user.username, url: "http://127.0.0.1:4180/atur-password#token=" + "b".repeat(64), expires_at: now + 3600000 };
     else if (path === "/api/password-links/validate") data = { username: "staf_baru", expires_at: now + 3600000 };
-    else if (path === "/api/reports/sales")
+    else if (path === "/api/reports/sales" || path === "/api/reports/purchases")
       data = {
         summary: { orders: state === "empty" ? 0 : 100, total: order.total * 100, subtotal: order.subtotal * 100, shipping_fee: 1000000 },
         daily: [{ day: "2026-11-08", orders: 100, total: order.total * 100 }],
         products: [{ product_id: product.id, name: longName, unit: product.unit, quantity: 999, subtotal: order.subtotal }],
         transactions: state === "empty" ? [] : rows,
         page: 0,
+        orders: [{ status: "pending", count: 5 }],
         operations: {
           orders: [
             { status: "review", count: 12 },
@@ -209,7 +210,10 @@ test("notifikasi, keranjang, checkout, dan perubahan orientasi", async ({ page }
   await page.setViewportSize({ width: 320, height: 740 });
   await fixture(page, "buyer");
   await page.goto("/");
-  await page.getByRole("button", { name: "Tambah " + longName, exact: true }).click();
+  await page
+    .locator(".product")
+    .getByRole("button", { name: "Tambah " + longName, exact: true })
+    .click();
   const toast = page.locator(".toast");
   await expect(toast).toBeVisible();
   const t = (await toast.boundingBox())!,
@@ -497,3 +501,111 @@ test("akses staf dan pengalihan URL lama", async ({ page }) => {
   await page.goto("/pengaturan#pembayaran");
   await expect(page.getByRole("heading", { name: "Akun", exact: true })).toBeVisible();
 });
+
+for (const width of [320, 390, 768, 1440]) {
+  test(`close controls stay top right at ${width}px`, async ({ page }, info) => {
+    await page.setViewportSize({ width, height: 900 });
+    await fixture(page, "buyer");
+    await page.goto("/");
+    await page
+      .locator(".product")
+      .getByRole("button", { name: "Tambah " + longName, exact: true })
+      .click();
+    const toast = page.locator(".toast");
+    await expect(toast).toBeVisible();
+    const check = async () => {
+      const container = (await toast.boundingBox())!;
+      const close = (await toast.getByRole("button", { name: "Tutup pemberitahuan" }).boundingBox())!;
+      expect(close.width).toBeGreaterThanOrEqual(44);
+      expect(close.height).toBeGreaterThanOrEqual(44);
+      expect(container.x + container.width - close.x - close.width).toBeLessThanOrEqual(18);
+      expect(close.y - container.y).toBeLessThanOrEqual(14);
+    };
+    await check();
+    await toast
+      .locator("span")
+      .first()
+      .evaluate((el) => (el.textContent = "Pemberitahuan panjang untuk pelanggan. ".repeat(15)));
+    await check();
+    await noOverflow(page);
+    await page.screenshot({ path: info.outputPath(`close-${width}.png`) });
+    await toast.getByRole("button").click();
+    await expect(toast).toBeHidden();
+  });
+}
+
+test("customer statistics and staff customer recovery", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 900 });
+  await fixture(page, "buyer");
+  await page.goto("/statistik");
+  await expect(page.getByRole("heading", { name: "Statistik belanja", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Produk paling sering dibeli" })).toBeVisible();
+  await expect(page.locator(".order-link").first()).toHaveAttribute("href", /^\/pesanan\//);
+  await noOverflow(page);
+  await fixture(page, "staff");
+  await page.goto("/kelola/pelanggan");
+  await expect(page.getByRole("heading", { name: "Pelanggan", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Tambah pelanggan" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Hapus permanen" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Buat link reset", exact: true }).first().click();
+  await expect(page.getByRole("dialog", { name: "Buat link reset", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Buat link baru", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Bagikan link password" })).toBeVisible();
+});
+
+for (const width of [320, 390, 768, 1440]) {
+  test(`dialog and nested notification close controls at ${width}px`, async ({ page }, info) => {
+    await page.setViewportSize({ width, height: 900 });
+    await fixture(page, "staff");
+    await page.goto("/kelola/pelanggan");
+    await page.getByRole("button", { name: "Buat link reset", exact: true }).first().click();
+    let dialog = page.getByRole("dialog", { name: "Buat link reset", exact: true });
+    const header = dialog.locator(".modal-header");
+    await header.locator("h2").evaluate((el) => (el.textContent = "Judul popup sangat panjang untuk menguji posisi tombol tutup pada layar kecil"));
+    const headingBox = (await header.boundingBox())!;
+    const closeBox = (await header.getByRole("button").boundingBox())!;
+    expect(headingBox.x + headingBox.width - closeBox.x - closeBox.width).toBeLessThanOrEqual(1);
+    expect(closeBox.y - headingBox.y).toBeLessThanOrEqual(1);
+    expect(closeBox.width).toBeGreaterThanOrEqual(44);
+    expect(closeBox.height).toBeGreaterThanOrEqual(44);
+    await dialog.getByRole("button", { name: "Buat link baru", exact: true }).click();
+    dialog = page.getByRole("dialog", { name: "Bagikan link password" });
+    await dialog.getByRole("button", { name: "Salin link", exact: true }).click();
+    const toast = dialog.locator(".toast");
+    await expect(toast).toBeVisible();
+    const toastBox = (await toast.boundingBox())!;
+    const dismissBox = (await toast.getByRole("button").boundingBox())!;
+    expect(toastBox.x + toastBox.width - dismissBox.x - dismissBox.width).toBeLessThanOrEqual(18);
+    expect(dismissBox.y - toastBox.y).toBeLessThanOrEqual(14);
+    await page.screenshot({ path: info.outputPath(`nested-toast-${width}.png`) });
+    await toast.getByRole("button").click();
+    await expect(toast).toBeHidden();
+    await dialog.getByRole("button", { name: "Tutup Bagikan link password", exact: true }).click();
+    await expect(dialog).toBeHidden();
+  });
+}
+
+for (const state of ["filled", "empty", "error", "loading"]) {
+  test(`purchase statistics ${state}`, async ({ page }, info) => {
+    await page.setViewportSize({ width: 320, height: 900 });
+    await fixture(page, "buyer", state);
+    await page.goto("/statistik");
+    await expect(page.getByRole("heading", { name: "Statistik belanja", exact: true })).toBeVisible();
+    if (state === "loading") await expect(page.locator("main .loading")).toBeVisible();
+    else if (state === "error") await expect(page.getByText(/Permintaan belum berhasil/)).toBeVisible();
+    else if (state === "empty") await expect(page.getByRole("heading", { name: "Belum ada belanja terverifikasi pada periode ini" })).toBeVisible();
+    else {
+      await expect(page.getByRole("heading", { name: "Belanja harian" })).toBeVisible();
+      await page.screenshot({ path: info.outputPath("purchases-320.png") });
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await noOverflow(page);
+      await page.screenshot({ path: info.outputPath("purchases-1440.png") });
+      await page.setViewportSize({ width: 320, height: 900 });
+      await page.getByLabel("Periode", { exact: true }).selectOption("custom");
+      await page.getByLabel("Tanggal mulai", { exact: true }).fill("2026-12-31");
+      await expect(page.getByText("Pilih rentang tanggal yang valid.")).toBeVisible();
+    }
+    await noOverflow(page);
+    await page.screenshot({ path: info.outputPath(`purchases-${state}.png`) });
+  });
+}

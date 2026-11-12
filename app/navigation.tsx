@@ -49,6 +49,7 @@ export function Navigation({ path, logout }: { path: string; logout: () => Promi
         ...(me.user?.role === "owner" ? [["/owner/statistik", "Statistik"]] : []),
         ["/kelola/pesanan", "Pesanan"],
         ["/kelola/produk", "Produk"],
+        ...(me.user?.role === "staff" ? [["/kelola/pelanggan", "Pelanggan"]] : []),
         ...(me.user?.role === "owner"
           ? [
               ["/owner/pengguna", "Pengguna"],
@@ -56,7 +57,16 @@ export function Navigation({ path, logout }: { path: string; logout: () => Promi
             ]
           : []),
       ]
-    : [["/", "Produk"], ["/keranjang", "Keranjang"], ...(me.user ? [["/pesanan", "Pesanan saya"]] : [])];
+    : [
+        ["/", "Produk"],
+        ["/keranjang", "Keranjang"],
+        ...(me.user
+          ? [
+              ["/pesanan", "Pesanan saya"],
+              ["/statistik", "Statistik"],
+            ]
+          : []),
+      ];
   const nav = (
     <nav className="primary-navigation" aria-label="Navigasi utama">
       {links.map(([href, label]) => {
@@ -110,14 +120,9 @@ export function Navigation({ path, logout }: { path: string; logout: () => Promi
     <div className="management-navigation">
       <p className="sidebar-identity">{me.user?.role === "owner" ? "Kelola toko" : "Operasional toko"}</p>
       {nav}
-      <Link className="sidebar-catalog" href="/" aria-current={path === "/" ? "page" : undefined} onClick={() => setMobile(false)}>
-        Lihat katalog
-      </Link>
       <div className="sidebar-account" aria-label="Akun Anda">
         <div className="sidebar-account-identity">
-          <span className="sidebar-avatar" aria-hidden="true">
-            {me.user?.username.slice(0, 1).toUpperCase()}
-          </span>
+          <span className="sidebar-avatar" aria-hidden="true" />
           <div>
             <strong>{me.user?.username}</strong>
             <small>{me.user ? roleLabel[me.user.role] : ""}</small>

@@ -141,14 +141,15 @@ export class Commerce extends DurableObject<Env> {
       const ip = request.headers.get("cf-connecting-ip") || "local";
       await limit(this.env, `password-link:ip:${ip}`, 30, 15 * 60000);
       const data = await body(request);
-      if (typeof data.token !== "string" || !/^[a-f0-9]{64}$/.test(data.token)) throw new HttpError(400, "Link tidak valid. Minta link baru kepada owner.");
+      if (typeof data.token !== "string" || !/^[a-f0-9]{64}$/.test(data.token))
+        throw new HttpError(400, "Link tidak valid. Minta link baru kepada staf (pelanggan) atau owner (staf).");
       const tokenHash = await digest(data.token);
       await limit(this.env, `password-link:token:${tokenHash}`, 10, 15 * 60000);
       const link = await db
         .prepare("SELECT u.id,u.username,u.status,p.expires_at FROM password_links p JOIN users u ON u.id=p.user_id WHERE p.token_hash=? AND p.expires_at>?")
         .bind(tokenHash, Date.now())
         .first<{ id: string; username: string; status: string; expires_at: number }>();
-      if (!link) throw new HttpError(400, "Link sudah kedaluwarsa, digunakan, atau dibatalkan. Minta link baru kepada owner.");
+      if (!link) throw new HttpError(400, "Link sudah kedaluwarsa, digunakan, atau dibatalkan. Minta link baru kepada staf (pelanggan) atau owner (staf).");
       if (path.endsWith("/validate")) return json({ username: link.username, expires_at: link.expires_at });
       validPassword(data.password);
       const hash = await hashPassword(data.password);
@@ -190,7 +191,8 @@ export class Commerce extends DurableObject<Env> {
         statements.push(audit(db, user, "registered", id, "user", { after: { username: name, role: "buyer" } }));
       } else {
         const verified = user?.password_hash ? await verifyPassword(data.password, user.password_hash) : (await hashPassword(data.password, "0".repeat(64)), false);
-        if (!verified || !user || user.status !== "active") throw new HttpError(401, "Username atau password salah. Jika akun sedang direset, gunakan link dari owner.");
+        if (!verified || !user || user.status !== "active")
+          throw new HttpError(401, "Username atau password salah. Jika akun sedang direset, gunakan link dari staf (pelanggan) atau owner (staf).");
       }
       statements.push(audit(db, user!, "login", user!.id, "user"));
       const token = await createSession(this.env, request, user!.id, statements);
@@ -529,11 +531,13 @@ export class Commerce extends DurableObject<Env> {
     }
     const reset = path.match(/^\/api\/users\/([^/]+)\/reset$/);
     if (reset && method === "POST") {
-      role(auth, "owner");
+      role(auth, "owner", "staff");
       if (reset[1] === auth.id) throw new HttpError(400, "Ganti password sendiri melalui Pengaturan.");
       const user = await db.prepare("SELECT id,username,role FROM users WHERE id=?").bind(reset[1]).first<{ id: string; username: string; role: string }>();
       if (!user) throw new HttpError(404, "Pengguna aktif tidak ditemukan.");
       if (user.role === "owner") throw new HttpError(403, "Pemulihan owner dilakukan melalui CLI.");
+      if (!((auth.role === "staff" && user.role === "buyer") || (auth.role === "owner" && user.role === "staff")))
+        throw new HttpError(403, "Reset pelanggan dilakukan oleh staf; reset staf dilakukan oleh owner.");
       await limit(this.env, `reset-issue:${auth.id}`, 30, 15 * 60000);
       const link = await newPasswordLink(db, user.id, user.username, new URL(request.url).origin);
       await db.batch([...link.statements, this.audit(auth, "password_link_issued", reset[1], { username: user.username, expires_at: link.result.expires_at })]);

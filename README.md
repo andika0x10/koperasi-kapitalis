@@ -33,16 +33,18 @@ Pemulihan langsung menonaktifkan password lama, membatalkan link sebelumnya, dan
 
 ## Peran dan halaman
 
-| Kemampuan                                              | Owner | Staf  | Pelanggan |
-| ------------------------------------------------------ | ----- | ----- | --------- |
-| Kelola barang dan seluruh pesanan                      | Ya    | Ya    | Tidak     |
-| Ubah ongkir                                            | Ya    | Ya    | Tidak     |
-| Atur rekening dan QRIS                                 | Ya    | Tidak | Tidak     |
-| Buat/hapus akun staf dan pelanggan serta link password | Ya    | Tidak | Tidak     |
-| Statistik dan audit                                    | Ya    | Tidak | Tidak     |
-| Belanja dan pesanan sendiri                            | Tidak | Tidak | Ya        |
+| Kemampuan                                          | Owner | Staf  | Pelanggan |
+| -------------------------------------------------- | ----- | ----- | --------- |
+| Kelola barang dan seluruh pesanan                  | Ya    | Ya    | Tidak     |
+| Ubah ongkir                                        | Ya    | Ya    | Tidak     |
+| Atur rekening dan QRIS                             | Ya    | Tidak | Tidak     |
+| Buat/hapus akun staf dan pelanggan + aktivasi awal | Ya    | Tidak | Tidak     |
+| Statistik toko dan audit                           | Ya    | Tidak | Tidak     |
+| Belanja dan pesanan sendiri                        | Tidak | Tidak | Ya        |
 
 - Operasional: `/kelola/produk`, `/kelola/pesanan`, `/kelola/pesanan/:id`.
+- Staf: `/kelola/pelanggan` untuk pencarian dan pemulihan akun pelanggan.
+- Pelanggan: `/statistik` untuk statistik belanja pribadi.
 - Owner: `/owner/statistik`, `/owner/pengguna`, `/owner/log-aktivitas`.
 - Pengaturan akun: `/pengaturan#akun`, `#keamanan`, `#perangkat`; `#pengiriman` untuk owner/staf dan `#pembayaran` khusus owner.
 - Link password: `/atur-password#token=...`. URL `/seller` lama dialihkan ke penggantinya, lalu tetap diperiksa izinnya.
@@ -52,13 +54,13 @@ Pemulihan langsung menonaktifkan password lama, membatalkan link sebelumnya, dan
 
 Owner memilih Tambah staf atau Tambah pelanggan lalu memasukkan username saja. Akun berstatus `pending`, tanpa password yang bisa dipakai. Link ditampilkan untuk disalin dan dibagikan manual. Pelanggan tetap dapat mendaftar sendiri menggunakan username/password.
 
-`POST /api/users` menerima `{username,role:"staff"|"buyer"}` dan mengembalikan `{id,username,url,expires_at}`. `POST /api/users/:id/reset` mengembalikan `{username,url,expires_at}`. Hasil penerbitan tidak dapat dibaca ulang; terbitkan link baru jika hilang.
+`POST /api/users` menerima `{username,role:"staff"|"buyer"}` dan mengembalikan `{id,username,url,expires_at}`. `POST /api/users/:id/reset` mengembalikan `{username,url,expires_at}`. Reset/aktivasi ulang pelanggan hanya oleh staf; reset/aktivasi ulang staf hanya oleh owner. Hasil penerbitan tidak dapat dibaca ulang; terbitkan link baru jika hilang.
 
 Link baru selalu membatalkan link sebelumnya. Reset langsung mengganti status akun menjadi `reset_required`, mengosongkan hash password, dan mencabut seluruh sesi. Link berlaku tepat 1 jam, sekali pakai; hanya hash token yang disimpan. Token masuk fragmen URL dan body permintaan, tidak masuk query/path API atau audit. Pengguna menentukan password 12–128 karakter lalu login kembali; tidak otomatis masuk.
 
 `POST /api/password-links/validate` menerima `{token}` dan mengembalikan username serta kedaluwarsa. `POST /api/password-links/complete` menerima `{token,password}`. Keduanya publik dengan pemeriksaan origin dan rate limit; konsumsi link serta aktivasi bersifat atomik. Ganti password biasa melalui `/api/password` tetap memerlukan password saat ini, membatalkan link aktif, dan mencabut sesi perangkat lain.
 
-Tidak ada email atau notifikasi eksternal. Lupa password meminta link kepada owner; pemulihan owner melalui CLI.
+Tidak ada email atau notifikasi eksternal. Pelanggan yang lupa password meminta link kepada staf; staf meminta kepada owner; pemulihan owner melalui CLI.
 
 ## Barang, foto, dan penghapusan
 
@@ -83,13 +85,15 @@ Satu bukti pembayaran diunggah sebelum tenggat. Bukti tidak dapat diganti; retry
 
 `GET /api/reports/sales?from=YYYY-MM-DD&to=YYYY-MM-DD&page=0` khusus owner. Tanggal inklusif dalam WIB berdasarkan `decided_at` untuk approved/shipped/completed. Respons memuat `summary`, `daily`, 10 `products` terlaris berdasarkan unit, `transactions` (30 per halaman), `page`, dan `operations`.
 
+`GET /api/reports/purchases?from=YYYY-MM-DD&to=YYYY-MM-DD&page=0` khusus pelanggan, selalu menggunakan ID sesi. Respons berisi `summary`, `daily`, `products`, `transactions`, `page`, dan `orders` (jumlah pesanan pribadi per status sepanjang waktu). Perhitungan belanja menggunakan batas tanggal WIB dan status terverifikasi yang sama dengan laporan penjualan, tanpa data stok/akun toko.
+
 `operations` menggambarkan kondisi saat ini dan tidak mengikuti filter tanggal: pesanan per status; daftar barang stok 0 dan stok 1–5; jumlah akun per role/status. Harga memakai snapshot; tidak menghitung laba, kinerja staf, atau ekspor.
 
 ## API dan audit
 
 Semua mutasi memerlukan Origin yang sama. Selain login, registrasi, dan konsumsi link password, mutasi juga memerlukan cookie sesi dan `x-csrf-token` dari `/api/me`. Respons error berbentuk `{error}`. JSON API memakai `Cache-Control: no-store`.
 
-`GET /api/users` khusus owner, filter `q`, `role=owner|staff|buyer`, `status=pending|active|reset_required`, serta `page` mulai 0, 30 baris per halaman. Katalog mendukung `q` dan `category`, dibatasi 500 barang.
+`GET /api/users` untuk owner dan staf. Staf selalu dibatasi pada pelanggan, termasuk jika mengirim filter role lain; staf tidak dapat menambah/menghapus akun. Owner mendukung filter `q`, `role=owner|staff|buyer`, `status=pending|active|reset_required`, serta `page` mulai 0, 30 baris per halaman. Katalog mendukung `q` dan `category`, dibatasi 500 barang.
 
 `GET /api/audit-logs` khusus owner: filter `actor`, `action`, `q`, pasangan `from`/`to` dalam WIB, dan `page`; maksimal 30 catatan per halaman, terbaru dahulu. Detail before/after memakai allowlist; password, hash password, token, isi gambar, dan data pribadi lengkap pesanan tidak dicatat. Kejadian mencakup aktivasi, penerbitan/pemakaian link, penghapusan, dan mutasi operasional. Pembacaan tidak dicatat. Retensi tetap 365 hari dengan alarm harian saat toko idle.
 

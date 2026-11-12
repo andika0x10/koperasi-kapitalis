@@ -43,7 +43,7 @@ export function DeleteDialog({ name, kind, onClose, onDelete }: { name: string; 
   );
 }
 
-export function Users() {
+export function Users({ customersOnly = false }: { customersOnly?: boolean }) {
   const { api, changed, notify } = useApp();
   const [q, setQ] = useState(""),
     [role, setRole] = useState(""),
@@ -53,23 +53,27 @@ export function Users() {
     [link, setLink] = useState<PasswordLink | null>(null),
     [deleting, setDeleting] = useState<User | null>(null),
     [resetting, setResetting] = useState<User | null>(null);
-  const { data, error, loading } = useData<(User & { created_at: number })[]>(`/api/users?q=${encodeURIComponent(q)}&role=${role}&status=${status}&page=${page}`);
+  const { data, error, loading } = useData<(User & { created_at: number })[]>(
+    `/api/users?q=${encodeURIComponent(q)}&role=${customersOnly ? "buyer" : role}&status=${status}&page=${page}`
+  );
   const labels = { pending: "Menunggu aktivasi", active: "Aktif", reset_required: "Menunggu password baru" };
   return (
     <>
       <div className="page-heading">
         <div>
-          <h1>Pengguna</h1>
-          <p>Atur akses staf dan bantu pelanggan mengakses akunnya.</p>
+          <h1>{customersOnly ? "Pelanggan" : "Pengguna"}</h1>
+          <p>{customersOnly ? "Bantu pelanggan mengakses kembali akunnya." : "Kelola akun pengguna dan akses staf."}</p>
         </div>
-        <div className="button-row">
-          <button className="button primary" onClick={() => setCreating("staff")}>
-            Tambah staf
-          </button>
-          <button className="button secondary" onClick={() => setCreating("buyer")}>
-            Tambah pelanggan
-          </button>
-        </div>
+        {!customersOnly && (
+          <div className="button-row">
+            <button className="button primary" onClick={() => setCreating("staff")}>
+              Tambah staf
+            </button>
+            <button className="button secondary" onClick={() => setCreating("buyer")}>
+              Tambah pelanggan
+            </button>
+          </div>
+        )}
       </div>
       <div className="management-filters">
         <Field label="Cari username">
@@ -82,20 +86,22 @@ export function Users() {
             placeholder="Cari pengguna…"
           />
         </Field>
-        <Field label="Peran">
-          <select
-            value={role}
-            onChange={(e) => {
-              setRole(e.target.value);
-              setPage(0);
-            }}
-          >
-            <option value="">Semua peran</option>
-            <option value="staff">Staf</option>
-            <option value="buyer">Pelanggan</option>
-            <option value="owner">Owner</option>
-          </select>
-        </Field>
+        {!customersOnly && (
+          <Field label="Peran">
+            <select
+              value={role}
+              onChange={(e) => {
+                setRole(e.target.value);
+                setPage(0);
+              }}
+            >
+              <option value="">Semua peran</option>
+              <option value="staff">Staf</option>
+              <option value="buyer">Pelanggan</option>
+              <option value="owner">Owner</option>
+            </select>
+          </Field>
+        )}
         <Field label="Status akun">
           <select
             value={status}
@@ -143,12 +149,16 @@ export function Users() {
                     <td data-label="Tindakan">
                       {u.role !== "owner" ? (
                         <div className="button-row">
-                          <button className="text-button" onClick={() => setResetting(u)}>
-                            {u.status === "pending" ? "Buat link aktivasi" : "Buat link reset"}
-                          </button>
-                          <button className="text-button danger-text" onClick={() => setDeleting(u)}>
-                            Hapus permanen
-                          </button>
+                          {(customersOnly ? u.role === "buyer" : u.role === "staff") && (
+                            <button className="text-button" onClick={() => setResetting(u)}>
+                              {u.status === "pending" ? "Buat link aktivasi" : "Buat link reset"}
+                            </button>
+                          )}
+                          {!customersOnly && (
+                            <button className="text-button danger-text" onClick={() => setDeleting(u)}>
+                              Hapus permanen
+                            </button>
+                          )}
                         </div>
                       ) : (
                         <small>Dikelola melalui pengaturan akun</small>
